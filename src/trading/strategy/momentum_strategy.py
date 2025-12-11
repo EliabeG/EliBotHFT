@@ -38,8 +38,13 @@ class MomentumStrategy(BaseStrategy):
         # Stop/Take em PIPS (mais preciso para HFT)
         # Para EURUSD: 1 pip = 0.0001, 20 pontos = 2 pips
         self.stop_loss_pips = self.config.get('stop_loss_pips', 30)  # 30 pips = 300 pontos
-        self.take_profit_pips = self.config.get('take_profit_pips', 2)  # 2 pips = 20 pontos
+        self.take_profit_pips = self.config.get('take_profit_pips', 5)  # 5 pips = 50 pontos (~$0.50)
         self.trailing_stop_pips = self.config.get('trailing_stop_pips', 2)  # 2 pips = 20 pontos
+
+        # Lucro mínimo antes de ativar trailing stop (para cobrir comissão)
+        # Com 0.01 lot: 1 pip = $0.10, comissão ~$0.03/lado = $0.06 total
+        # Precisa de pelo menos 1 pip de lucro para cobrir comissão
+        self.min_profit_to_trail_pips = self.config.get('min_profit_to_trail_pips', 1)  # 1 pip mínimo
 
         # Pip value por símbolo (pode ser configurado)
         self._pip_values = self.config.get('pip_values', {
@@ -159,21 +164,30 @@ class MomentumStrategy(BaseStrategy):
         return 100 - (100 / (1 + rs))
 
     def _update_trailing_stop(self, symbol: str, price: float) -> None:
-        """Atualiza trailing stop"""
+        """Atualiza trailing stop - só ativa após lucro mínimo"""
         position = self.get_position(symbol)
         if not position:
             return
 
+        pip_value = self._get_pip_value(symbol)
+        min_profit_distance = self.min_profit_to_trail_pips * pip_value
+
         if position.side == 'long':
-            # Atualizar high
-            current_high = self._trailing_highs.get(symbol, price)
-            if price > current_high:
-                self._trailing_highs[symbol] = price
+            # Só começa a rastrear trailing high após lucro mínimo
+            current_profit = price - position.entry_price
+            if current_profit >= min_profit_distance:
+                current_high = self._trailing_highs.get(symbol, price)
+                if price > current_high:
+                    self._trailing_highs[symbol] = price
+                    logger.debug(f"[{symbol}] Trailing high atualizado: {price:.5f} (profit: {current_profit/pip_value:.1f} pips)")
         else:
-            # Atualizar low
-            current_low = self._trailing_lows.get(symbol, price)
-            if price < current_low:
-                self._trailing_lows[symbol] = price
+            # Short: lucro é quando preço cai
+            current_profit = position.entry_price - price
+            if current_profit >= min_profit_distance:
+                current_low = self._trailing_lows.get(symbol, price)
+                if price < current_low:
+                    self._trailing_lows[symbol] = price
+                    logger.debug(f"[{symbol}] Trailing low atualizado: {price:.5f} (profit: {current_profit/pip_value:.1f} pips)")
 
     def _check_entry_conditions(self, symbol: str, quote: Quote) -> Optional[Signal]:
         """Verifica condições de entrada"""
@@ -262,7 +276,7 @@ class MomentumStrategy(BaseStrategy):
         return None
 
     def _check_exit_conditions(self, symbol: str, quote: Quote) -> Optional[Signal]:
-        """Verifica condições de saída"""
+        """Verifica condições de saída - só fecha no positivo"""
         position = self.get_position(symbol)
         if not position:
             return None
@@ -270,33 +284,38 @@ class MomentumStrategy(BaseStrategy):
         mid = quote.mid_price
         pip_value = self._get_pip_value(symbol)
         trailing_distance = self.trailing_stop_pips * pip_value
+        min_profit_distance = self.min_profit_to_trail_pips * pip_value
 
         # Trailing stop
         if position.side == 'long':
-            trailing_high = self._trailing_highs.get(symbol, position.entry_price)
-            trailing_stop = trailing_high - trailing_distance  # Baseado em pips
+            # Só verifica trailing stop se já tiver trailing high registrado
+            trailing_high = self._trailing_highs.get(symbol)
 
-            if mid < trailing_stop:
+            if trailing_high is not None:
+                trailing_stop = trailing_high - trailing_distance
                 profit_pips = (mid - position.entry_price) / pip_value
-                logger.info(f"[{symbol}] TRAILING STOP triggered: high={trailing_high:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
-                self._trailing_highs.pop(symbol, None)
-                return self._emit_signal(Signal(
-                    signal_type=SignalType.CLOSE_LONG,
-                    symbol=symbol,
-                    price=mid,
-                    strength=SignalStrength.STRONG,
-                    confidence=0.9,
-                    metadata={
-                        'reason': 'trailing_stop',
-                        'trigger_price': trailing_stop,
-                        'trailing_pips': self.trailing_stop_pips,
-                        'profit_pips': profit_pips
-                    }
-                ))
 
-            # Momentum reversal
-            if self._short_momentum < -self.exit_threshold:
-                profit_pips = (mid - position.entry_price) / pip_value
+                # SÓ fecha se ainda estiver no lucro (acima do mínimo)
+                if mid < trailing_stop and profit_pips >= 0.5:  # Mínimo 0.5 pips de lucro
+                    logger.info(f"[{symbol}] TRAILING STOP triggered: high={trailing_high:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
+                    self._trailing_highs.pop(symbol, None)
+                    return self._emit_signal(Signal(
+                        signal_type=SignalType.CLOSE_LONG,
+                        symbol=symbol,
+                        price=mid,
+                        strength=SignalStrength.STRONG,
+                        confidence=0.9,
+                        metadata={
+                            'reason': 'trailing_stop',
+                            'trigger_price': trailing_stop,
+                            'trailing_pips': self.trailing_stop_pips,
+                            'profit_pips': profit_pips
+                        }
+                    ))
+
+            # Momentum reversal - só sai se estiver no lucro
+            profit_pips = (mid - position.entry_price) / pip_value
+            if self._short_momentum < -self.exit_threshold and profit_pips >= 0.5:
                 logger.info(f"[{symbol}] MOMENTUM REVERSAL exit: profit={profit_pips:.1f} pips")
                 self._trailing_highs.pop(symbol, None)
                 return self._emit_signal(Signal(
@@ -313,30 +332,34 @@ class MomentumStrategy(BaseStrategy):
                 ))
 
         else:  # Short
-            trailing_low = self._trailing_lows.get(symbol, position.entry_price)
-            trailing_stop = trailing_low + trailing_distance  # Baseado em pips
+            # Só verifica trailing stop se já tiver trailing low registrado
+            trailing_low = self._trailing_lows.get(symbol)
 
-            if mid > trailing_stop:
+            if trailing_low is not None:
+                trailing_stop = trailing_low + trailing_distance
                 profit_pips = (position.entry_price - mid) / pip_value
-                logger.info(f"[{symbol}] TRAILING STOP triggered: low={trailing_low:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
-                self._trailing_lows.pop(symbol, None)
-                return self._emit_signal(Signal(
-                    signal_type=SignalType.CLOSE_SHORT,
-                    symbol=symbol,
-                    price=mid,
-                    strength=SignalStrength.STRONG,
-                    confidence=0.9,
-                    metadata={
-                        'reason': 'trailing_stop',
-                        'trigger_price': trailing_stop,
-                        'trailing_pips': self.trailing_stop_pips,
-                        'profit_pips': profit_pips
-                    }
-                ))
 
-            # Momentum reversal
-            if self._short_momentum > self.exit_threshold:
-                profit_pips = (position.entry_price - mid) / pip_value
+                # SÓ fecha se ainda estiver no lucro
+                if mid > trailing_stop and profit_pips >= 0.5:
+                    logger.info(f"[{symbol}] TRAILING STOP triggered: low={trailing_low:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
+                    self._trailing_lows.pop(symbol, None)
+                    return self._emit_signal(Signal(
+                        signal_type=SignalType.CLOSE_SHORT,
+                        symbol=symbol,
+                        price=mid,
+                        strength=SignalStrength.STRONG,
+                        confidence=0.9,
+                        metadata={
+                            'reason': 'trailing_stop',
+                            'trigger_price': trailing_stop,
+                            'trailing_pips': self.trailing_stop_pips,
+                            'profit_pips': profit_pips
+                        }
+                    ))
+
+            # Momentum reversal - só sai se estiver no lucro
+            profit_pips = (position.entry_price - mid) / pip_value
+            if self._short_momentum > self.exit_threshold and profit_pips >= 0.5:
                 logger.info(f"[{symbol}] MOMENTUM REVERSAL exit: profit={profit_pips:.1f} pips")
                 self._trailing_lows.pop(symbol, None)
                 return self._emit_signal(Signal(

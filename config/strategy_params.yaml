@@ -40,14 +40,17 @@ momentum:
 
 # HFT Risk Parameters (em pips, não percentagem)
 # Para EURUSD: 1 pip = 0.0001 = 10 pontos
-# 20 pontos = 2 pips
+# Com 0.01 lot: 1 pip = $0.10, comissão ~$0.03/lado
 hft_params:
   # Stop Loss em pips (30 pips = 300 pontos)
   stop_loss_pips: 30
-  # Take Profit em pips (2 pips = 20 pontos) - pequeno para HFT
-  take_profit_pips: 2
-  # Trailing Stop em pips (2 pips = 20 pontos)
+  # Take Profit em pips (5 pips = 50 pontos = ~$0.50)
+  take_profit_pips: 5
+  # Trailing Stop distance em pips (2 pips = 20 pontos)
   trailing_stop_pips: 2
+  # Lucro mínimo antes de ativar trailing (para cobrir comissão)
+  # 1 pip = $0.10, cobre $0.06 de comissão round-trip
+  min_profit_to_trail_pips: 1
   # Pip values por símbolo
   pip_values:
     EURUSD: 0.0001
