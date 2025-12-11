@@ -743,6 +743,10 @@ class FXOpenClient:
         # Converter lotes para unidades (Amount)
         amount = self._lots_to_amount(symbol, volume)
 
+        # Obter precisão do símbolo
+        specs = self._symbol_specs.get(symbol, {})
+        precision = specs.get('precision', 5)
+
         params = {
             'Symbol': symbol,
             'Side': side.value,
@@ -752,15 +756,15 @@ class FXOpenClient:
         }
 
         if price:
-            params['Price'] = price
+            params['Price'] = round(price, precision)
         if stop_loss:
-            params['StopLoss'] = stop_loss
+            params['StopLoss'] = round(stop_loss, precision)
         if take_profit:
-            params['TakeProfit'] = take_profit
+            params['TakeProfit'] = round(take_profit, precision)
 
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "TradeCreate",  # Correto: TradeCreate, não Trade
+            "Request": "TradeCreate",
             "Params": params
         }
 
@@ -774,8 +778,8 @@ class FXOpenClient:
             logger.error("Sem resposta do servidor")
             return None
 
-        # Verificar erro no nível superior (formato: {"Response": "Error", "Error": "..."})
-        if response.get('Response') == 'Error':
+        # Verificar erro no nível superior (pode vir com Response="Error" ou Response="TradeCreate" + Error)
+        if 'Error' in response:
             logger.error(f"Erro ao abrir posição: {response.get('Error', 'Unknown error')}")
             return None
 
