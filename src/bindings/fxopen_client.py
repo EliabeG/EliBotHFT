@@ -481,18 +481,35 @@ class FXOpenClient:
     def _update_account_from_result(self, result: dict) -> None:
         """Atualiza account info do resultado"""
         try:
+            balance = float(result.get('Balance', 0))
+            equity = float(result.get('Equity', 0))
+            margin = float(result.get('Margin', 0))
+
+            # FreeMargin pode não ser fornecido diretamente
+            # FreeMargin = Equity - Margin
+            free_margin = float(result.get('FreeMargin', 0))
+            if free_margin == 0 and equity > 0:
+                free_margin = equity - margin
+
+            # BalanceCurrency pode estar em campo diferente
+            currency = result.get('Currency', result.get('BalanceCurrency', 'USD'))
+
+            logger.info(f"Account info atualizado: Balance={balance}, Equity={equity}, Margin={margin}, FreeMargin={free_margin}")
+
             self._account_info = AccountInfo(
                 account_id=str(result.get('Id', '')),
-                balance=float(result.get('Balance', 0)),
-                equity=float(result.get('Equity', 0)),
-                margin=float(result.get('Margin', 0)),
-                free_margin=float(result.get('FreeMargin', 0)),
+                balance=balance,
+                equity=equity,
+                margin=margin,
+                free_margin=free_margin,
                 margin_level=float(result.get('MarginLevel', 0)),
-                currency=result.get('Currency', 'USD'),
+                currency=currency,
                 leverage=int(result.get('Leverage', 500))
             )
         except Exception as e:
             logger.error(f"Erro ao parsear account info: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _send_trade_request(self, request: dict, timeout: float = 10.0) -> Optional[dict]:
         """Envia request ao Trade WebSocket e aguarda resposta"""
