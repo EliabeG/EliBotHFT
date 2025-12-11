@@ -170,6 +170,9 @@ class FXOpenClient:
         # Request tracking
         self._pending_requests: Dict[str, asyncio.Future] = {}
 
+        # Symbol specifications (contract sizes)
+        self._symbol_specs: Dict[str, dict] = {}
+
         logger.info(f"FXOpenClient inicializado para {self.config.server}")
         logger.info(f"Feed URL: {self.config.feed_url}")
         logger.info(f"Trade URL: {self.config.trade_url}")
@@ -334,6 +337,10 @@ class FXOpenClient:
 
                     # Iniciar receiver
                     asyncio.create_task(self._feed_ws_receiver())
+
+                    # Buscar especificações dos símbolos
+                    await self._load_symbol_specs()
+
                     return True
 
             return False
@@ -511,6 +518,68 @@ class FXOpenClient:
             logger.error(f"Erro enviando request: {e}")
             return None
 
+    async def _load_symbol_specs(self) -> None:
+        """Carrega especificações dos símbolos (contract size, etc)"""
+        if not self._feed_ws or self._feed_ws.closed:
+            logger.warning("Feed WS não conectado para carregar specs")
+            return
+
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "Symbols"
+        }
+
+        try:
+            await self._feed_ws.send_json(request)
+
+            # Aguardar resposta
+            response = await asyncio.wait_for(
+                self._feed_ws.receive(),
+                timeout=10.0
+            )
+
+            if response.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(response.data)
+                if data.get('Response') == 'Symbols' and 'Result' in data:
+                    for symbol_data in data['Result']:
+                        symbol = symbol_data.get('Symbol', '')
+                        if symbol:
+                            self._symbol_specs[symbol] = {
+                                'contract_size': float(symbol_data.get('ContractSize', 100000)),
+                                'min_amount': float(symbol_data.get('MinTradeAmount', 0.01)),
+                                'max_amount': float(symbol_data.get('MaxTradeAmount', 1000)),
+                                'step': float(symbol_data.get('TradeAmountStep', 0.01)),
+                                'precision': int(symbol_data.get('Precision', 5))
+                            }
+                    logger.info(f"Carregadas specs de {len(self._symbol_specs)} símbolos")
+
+        except Exception as e:
+            logger.error(f"Erro ao carregar specs: {e}")
+            # Usar defaults
+            for symbol in ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY']:
+                self._symbol_specs[symbol] = {
+                    'contract_size': 100000 if 'USD' in symbol and 'XAU' not in symbol else 100,
+                    'min_amount': 0.01,
+                    'max_amount': 1000,
+                    'step': 0.01,
+                    'precision': 5
+                }
+
+    def _lots_to_amount(self, symbol: str, lots: float) -> float:
+        """Converte lotes para unidades (Amount)"""
+        # Obter contract size do símbolo
+        specs = self._symbol_specs.get(symbol, {})
+        contract_size = specs.get('contract_size', 100000)
+
+        # Para XAUUSD e metais, geralmente é diferente
+        if 'XAU' in symbol or 'XAG' in symbol:
+            # Metais: 1 lote = 100 onças
+            contract_size = specs.get('contract_size', 100)
+
+        amount = lots * contract_size
+        logger.info(f"Convertendo {lots} lotes -> {amount} unidades ({symbol}, contract_size={contract_size})")
+        return amount
+
     async def _request_account_info(self) -> None:
         """Requisita informações da conta"""
         request = {
@@ -635,12 +704,15 @@ class FXOpenClient:
                            price: float = None, stop_loss: float = None,
                            take_profit: float = None,
                            comment: str = 'EliBotHFT') -> Optional[str]:
-        """Abre nova posição"""
+        """Abre nova posição (volume em lotes, convertido para unidades)"""
+        # Converter lotes para unidades (Amount)
+        amount = self._lots_to_amount(symbol, volume)
+
         params = {
             'Symbol': symbol,
             'Side': side.value,
             'Type': order_type.value,
-            'Amount': volume,  # FXOpen usa 'Amount', não 'Volume'
+            'Amount': amount,  # Unidades, não lotes
             'Comment': comment
         }
 
