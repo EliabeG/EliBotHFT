@@ -653,15 +653,23 @@ class FXOpenClient:
             "Params": params
         }
 
+        logger.info(f"Enviando ordem: {json.dumps(request, indent=2)}")
+
         response = await self._send_trade_request(request)
+
+        logger.info(f"Resposta da ordem: {json.dumps(response, indent=2) if response else 'None'}")
 
         if response and 'Result' in response:
             result = response['Result']
+            if 'Error' in result:
+                logger.error(f"Erro ao abrir posição: {result['Error']}")
+                return None
             if 'Id' in result:
                 position_id = str(result['Id'])
                 logger.info(f"Posição aberta: {position_id} {side.value} {volume} {symbol}")
                 return position_id
 
+        logger.warning("Resposta não contém Result ou Id")
         return None
 
     async def close_position(self, position_id: str, volume: float = None) -> bool:

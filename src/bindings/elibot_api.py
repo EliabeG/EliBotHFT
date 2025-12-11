@@ -334,6 +334,7 @@ class EliBotAPI:
     def _on_strategy_signal(self, signal: Signal) -> None:
         """Callback para sinais de estratégia"""
         logger.info(f"Sinal recebido: {signal.signal_type.value} {signal.symbol} @ {signal.price}")
+        logger.info(f"Modo atual: {self.config.mode}, Trading habilitado: {self.config.enabled}")
 
         # Emitir para callbacks externos
         for cb in self._on_signal:
@@ -344,10 +345,15 @@ class EliBotAPI:
 
         # Executar sinal se em modo live
         if self.config.mode == 'live' and self.config.enabled:
+            logger.info("Executando sinal em modo LIVE...")
             asyncio.create_task(self._execute_signal(signal))
+        else:
+            logger.info(f"Sinal ignorado (modo={self.config.mode}, enabled={self.config.enabled})")
 
     async def _execute_signal(self, signal: Signal) -> None:
         """Executa sinal de trading"""
+        logger.info(f"Iniciando execução de sinal: {signal.signal_type.value} {signal.symbol}")
+
         # Verificar risco
         order = Order(
             symbol=signal.symbol,
@@ -358,13 +364,18 @@ class EliBotAPI:
         )
 
         risk_check = self._risk_manager.check_pre_trade(order)
+        logger.info(f"Risk check: passed={risk_check.passed}, message={risk_check.message}")
+
         if not risk_check:
             logger.warning(f"Sinal rejeitado por risco: {risk_check.message}")
             return
 
         # Executar ordem
         try:
+            position_id = None
+
             if signal.signal_type == SignalType.BUY:
+                logger.info(f"Abrindo posição BUY {signal.symbol} volume={signal.size or 0.01}")
                 position_id = await self._fxopen.open_position(
                     symbol=signal.symbol,
                     side=OrderSide.BUY,
@@ -373,6 +384,7 @@ class EliBotAPI:
                     take_profit=signal.take_profit
                 )
             elif signal.signal_type == SignalType.SELL:
+                logger.info(f"Abrindo posição SELL {signal.symbol} volume={signal.size or 0.01}")
                 position_id = await self._fxopen.open_position(
                     symbol=signal.symbol,
                     side=OrderSide.SELL,
@@ -382,17 +394,23 @@ class EliBotAPI:
                 )
             elif signal.signal_type in (SignalType.CLOSE_LONG, SignalType.CLOSE_SHORT):
                 # Encontrar e fechar posição
+                logger.info(f"Fechando posições para {signal.symbol}")
                 positions = await self._fxopen.get_positions()
                 for pos in positions:
                     if pos.symbol == signal.symbol:
                         await self._fxopen.close_position(pos.position_id)
+                        logger.info(f"Posição {pos.position_id} fechada")
                         break
 
             if position_id:
-                logger.info(f"Ordem executada: {position_id}")
+                logger.info(f"Ordem executada com sucesso! ID: {position_id}")
+            else:
+                logger.warning("Ordem não retornou ID de posição")
 
         except Exception as e:
             logger.error(f"Erro ao executar sinal: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_trade_update(self, data: dict) -> None:
         """Callback para atualizações de trade"""
