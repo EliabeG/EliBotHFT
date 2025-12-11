@@ -393,7 +393,12 @@ class RiskManager:
     def _check_position_count(self) -> RiskCheck:
         """Verifica número de posições abertas"""
         with self._lock:
-            open_positions = len([p for p in self._positions.values() if p.quantity > 0])
+            # Contar posições com quantity > 0 ou size > 0 (compatibilidade com diferentes Position classes)
+            open_positions = 0
+            for p in self._positions.values():
+                qty = getattr(p, 'quantity', None) or getattr(p, 'size', 0)
+                if qty > 0:
+                    open_positions += 1
 
             if open_positions >= self.limits.max_open_positions:
                 return RiskCheck(
