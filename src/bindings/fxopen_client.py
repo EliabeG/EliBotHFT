@@ -45,16 +45,17 @@ class FXOpenConfig:
     currency: str = 'USD'
 
     # WebSocket URLs (baseado na documentação oficial)
-    feed_port: int = 3000  # Market data
-    trade_port: int = 3001  # Trading
+    # Para conta DEMO: ttdemomarginal.fxopen.net -> marginalttdemowebapi.fxopen.net
+    # Para conta LIVE: ttlivemarginal.fxopen.net -> marginalttlivewebapi.fxopen.net
+    webapi_host: str = 'marginalttdemowebapi.fxopen.net'  # Demo account
 
     @property
     def feed_url(self) -> str:
-        return f'wss://{self.server}:{self.feed_port}'
+        return f'wss://{self.webapi_host}/feed'
 
     @property
     def trade_url(self) -> str:
-        return f'wss://{self.server}:{self.trade_port}'
+        return f'wss://{self.webapi_host}/trade'
 
 
 class OrderSide(Enum):
