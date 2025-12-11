@@ -171,7 +171,10 @@ async def run_headless(bot: EliBotAPI):
     except KeyboardInterrupt:
         pass
     finally:
+        logger.info("Encerrando bot...")
         await bot.stop()
+        # Aguardar limpeza de conexões pendentes
+        await asyncio.sleep(0.5)
 
 
 def main():

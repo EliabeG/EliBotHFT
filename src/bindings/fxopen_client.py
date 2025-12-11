@@ -370,6 +370,8 @@ class FXOpenClient:
 
         if self._session:
             await self._session.close()
+            # Aguardar limpeza das conexões SSL
+            await asyncio.sleep(0.25)
             self._session = None
 
         logger.info("Desconectado da FXOpen")
