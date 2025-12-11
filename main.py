@@ -29,6 +29,10 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 
+# Criar diretórios necessários ANTES de configurar logging
+(PROJECT_ROOT / 'data' / 'logs').mkdir(parents=True, exist_ok=True)
+(PROJECT_ROOT / 'data' / 'market_data').mkdir(parents=True, exist_ok=True)
+
 # Importar componentes
 from src.bindings import EliBotAPI, FXOpenConfig
 from src.bindings.elibot_api import BotConfig, BotState
@@ -180,10 +184,6 @@ def main():
     logger.info(f"Modo: {args.mode}")
     logger.info(f"Símbolos: {args.symbols}")
     logger.info(f"Config: {args.config}")
-
-    # Criar diretórios necessários
-    (PROJECT_ROOT / 'data' / 'logs').mkdir(parents=True, exist_ok=True)
-    (PROJECT_ROOT / 'data' / 'market_data').mkdir(parents=True, exist_ok=True)
 
     # Configurar FXOpen
     fxopen_config = FXOpenConfig(
