@@ -3,8 +3,10 @@ FXOpen Client - Cliente para FXOpen TickTrader Web API
 Integração completa via WebSocket (Feed e Trade)
 
 Baseado na documentação oficial:
-- Feed: wss://server:3000 (Market Data)
-- Trade: wss://server:3001 (Trading)
+- Feed: wss://marginalttdemowebapi.fxopen.net/feed (Market Data)
+- Trade: wss://marginalttdemowebapi.fxopen.net/trade (Trading)
+
+Referência: https://marginalttlivewebapi.fxopen.net/api/doc/WebSockets-Trade
 """
 
 import asyncio
@@ -129,8 +131,8 @@ class FXOpenClient:
     Cliente para FXOpen TickTrader Web API via WebSocket
 
     Arquitetura:
-    - Feed WebSocket (porta 3000): Market data, ticks, quotes
-    - Trade WebSocket (porta 3001): Account info, trading, positions
+    - Feed WebSocket (/feed): Market data, ticks, quotes
+    - Trade WebSocket (/trade): Account info, trading, positions
 
     Autenticação:
     - HMAC-SHA256 via mensagem Login no WebSocket
@@ -250,7 +252,7 @@ class FXOpenClient:
             return False
 
     async def _connect_trade_ws(self) -> bool:
-        """Conecta ao WebSocket de Trading (porta 3001)"""
+        """Conecta ao WebSocket de Trading (/trade)"""
         try:
             self._trade_ws = await self._session.ws_connect(
                 self.config.trade_url,
@@ -305,7 +307,7 @@ class FXOpenClient:
             return False
 
     async def _connect_feed_ws(self) -> bool:
-        """Conecta ao WebSocket de Feed (porta 3000)"""
+        """Conecta ao WebSocket de Feed (/feed)"""
         try:
             self._feed_ws = await self._session.ws_connect(
                 self.config.feed_url,
@@ -540,15 +542,18 @@ class FXOpenClient:
 
             if response.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(response.data)
+                logger.debug(f"Symbols response: {json.dumps(data, indent=2)}")
                 if data.get('Response') == 'Symbols' and 'Result' in data:
-                    for symbol_data in data['Result']:
+                    # Result.Symbols contém a lista de símbolos
+                    symbols_list = data['Result'].get('Symbols', [])
+                    for symbol_data in symbols_list:
                         symbol = symbol_data.get('Symbol', '')
                         if symbol:
                             self._symbol_specs[symbol] = {
                                 'contract_size': float(symbol_data.get('ContractSize', 100000)),
-                                'min_amount': float(symbol_data.get('MinTradeAmount', 0.01)),
-                                'max_amount': float(symbol_data.get('MaxTradeAmount', 1000)),
-                                'step': float(symbol_data.get('TradeAmountStep', 0.01)),
+                                'min_amount': float(symbol_data.get('MinTradeAmount', 1000)),
+                                'max_amount': float(symbol_data.get('MaxTradeAmount', 10000000)),
+                                'step': float(symbol_data.get('TradeAmountStep', 1000)),
                                 'precision': int(symbol_data.get('Precision', 5))
                             }
                     logger.info(f"Carregadas specs de {len(self._symbol_specs)} símbolos")
@@ -584,11 +589,12 @@ class FXOpenClient:
         """Requisita informações da conta"""
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "Account",  # Correto: Account, não GetAccount
-            "Params": {}
+            "Request": "Account"
         }
 
+        logger.debug(f"Requesting account info: {json.dumps(request)}")
         response = await self._send_trade_request(request)
+        logger.debug(f"Account response: {json.dumps(response, indent=2) if response else 'None'}")
         if response and 'Result' in response:
             self._update_account_from_result(response['Result'])
 
@@ -624,18 +630,30 @@ class FXOpenClient:
         # Para conta Gross usamos "Trades", para Net usamos "Positions"
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "Trades"  # Correto para conta Gross
+            "Request": "Trades"
         }
 
+        logger.debug(f"Requesting trades: {json.dumps(request)}")
         response = await self._send_trade_request(request)
+        logger.debug(f"Trades response: {json.dumps(response, indent=2) if response else 'None'}")
+
         if not response or 'Result' not in response:
             return []
 
+        # Result.Trades contém a lista de trades
+        trades_list = response.get('Result', {}).get('Trades', [])
+
         positions = []
-        for pos in response.get('Result', []):
+        for pos in trades_list:
             try:
-                # Filtrar apenas trades abertos
-                if pos.get('Status') not in ('Opened', 'PartiallyFilled'):
+                # Filtrar apenas trades abertos (Status: Calculated = posição aberta)
+                status = pos.get('Status', '')
+                if status not in ('Calculated', 'Opened', 'PartiallyFilled', 'Filled'):
+                    continue
+
+                # Filtrar apenas posições (Type: Position)
+                trade_type = pos.get('Type', '')
+                if trade_type != 'Position':
                     continue
 
                 position = TradePosition(
@@ -735,17 +753,32 @@ class FXOpenClient:
 
         logger.info(f"Resposta da ordem: {json.dumps(response, indent=2) if response else 'None'}")
 
-        if response and 'Result' in response:
+        if not response:
+            logger.error("Sem resposta do servidor")
+            return None
+
+        # Verificar erro no nível superior (formato: {"Response": "Error", "Error": "..."})
+        if response.get('Response') == 'Error':
+            logger.error(f"Erro ao abrir posição: {response.get('Error', 'Unknown error')}")
+            return None
+
+        # Verificar se há Result
+        if 'Result' in response:
             result = response['Result']
-            if 'Error' in result:
+
+            # Verificar erro dentro do Result
+            if isinstance(result, dict) and 'Error' in result:
                 logger.error(f"Erro ao abrir posição: {result['Error']}")
                 return None
-            if 'Id' in result:
-                position_id = str(result['Id'])
+
+            # Sucesso - Result pode conter Trade com Id
+            trade_data = result.get('Trade', result)  # Trade está em Result.Trade
+            if isinstance(trade_data, dict) and 'Id' in trade_data:
+                position_id = str(trade_data['Id'])
                 logger.info(f"Posição aberta: {position_id} {side.value} {volume} {symbol}")
                 return position_id
 
-        logger.warning("Resposta não contém Result ou Id")
+        logger.warning("Resposta não contém Result ou Trade.Id")
         return None
 
     async def close_position(self, position_id: str, volume: float = None) -> bool:
