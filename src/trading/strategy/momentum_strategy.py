@@ -35,10 +35,20 @@ class MomentumStrategy(BaseStrategy):
         self.exit_threshold = self.config.get('exit_threshold', 0.0001)
         self.confirmation_ratio = self.config.get('confirmation_ratio', 0.7)
 
-        # Stop/Take (em % do preço)
-        self.stop_loss_pct = self.config.get('stop_loss_pct', 0.002)  # 0.2%
-        self.take_profit_pct = self.config.get('take_profit_pct', 0.003)  # 0.3%
-        self.trailing_stop_pct = self.config.get('trailing_stop_pct', 0.001)  # 0.1%
+        # Stop/Take em PIPS (mais preciso para HFT)
+        # Para EURUSD: 1 pip = 0.0001, 20 pontos = 2 pips
+        self.stop_loss_pips = self.config.get('stop_loss_pips', 30)  # 30 pips = 300 pontos
+        self.take_profit_pips = self.config.get('take_profit_pips', 2)  # 2 pips = 20 pontos
+        self.trailing_stop_pips = self.config.get('trailing_stop_pips', 2)  # 2 pips = 20 pontos
+
+        # Pip value por símbolo (pode ser configurado)
+        self._pip_values = self.config.get('pip_values', {
+            'EURUSD': 0.0001,
+            'GBPUSD': 0.0001,
+            'USDJPY': 0.01,
+            'XAUUSD': 0.01,  # Gold usa 0.01
+            'default': 0.0001
+        })
 
         # Volume filter
         self.volume_filter = self.config.get('volume_filter', True)
@@ -126,6 +136,10 @@ class MomentumStrategy(BaseStrategy):
         else:
             self._trend_strength = 0
 
+    def _get_pip_value(self, symbol: str) -> float:
+        """Retorna o valor de 1 pip para o símbolo"""
+        return self._pip_values.get(symbol, self._pip_values.get('default', 0.0001))
+
     def _calculate_rsi(self, prices: List[float], period: int) -> float:
         """Calcula RSI"""
         if len(prices) < period + 1:
@@ -179,6 +193,11 @@ class MomentumStrategy(BaseStrategy):
             return None
 
         mid = quote.mid_price
+        pip_value = self._get_pip_value(symbol)
+
+        # Calcular SL/TP em valor absoluto (baseado em pips)
+        sl_distance = self.stop_loss_pips * pip_value
+        tp_distance = self.take_profit_pips * pip_value
 
         # Sinal de compra
         if (self._short_momentum > self.entry_threshold and
@@ -187,19 +206,26 @@ class MomentumStrategy(BaseStrategy):
 
             confidence = min(1.0, abs(self._trend_strength) + abs(self._short_momentum) * 50)
 
+            stop_loss = mid - sl_distance
+            take_profit = mid + tp_distance
+
+            logger.debug(f"[{symbol}] BUY signal: mid={mid:.5f}, SL={stop_loss:.5f} ({self.stop_loss_pips} pips), TP={take_profit:.5f} ({self.take_profit_pips} pips)")
+
             return self._emit_signal(Signal(
                 signal_type=SignalType.BUY,
                 symbol=symbol,
                 price=quote.ask_price,
                 strength=self._get_strength(confidence),
-                stop_loss=mid * (1 - self.stop_loss_pct),
-                take_profit=mid * (1 + self.take_profit_pct),
+                stop_loss=stop_loss,
+                take_profit=take_profit,
                 confidence=confidence,
                 metadata={
                     'short_momentum': self._short_momentum,
                     'medium_momentum': self._medium_momentum,
                     'trend_strength': self._trend_strength,
-                    'rsi': self._rsi
+                    'rsi': self._rsi,
+                    'sl_pips': self.stop_loss_pips,
+                    'tp_pips': self.take_profit_pips
                 }
             ))
 
@@ -210,19 +236,26 @@ class MomentumStrategy(BaseStrategy):
 
             confidence = min(1.0, abs(self._trend_strength) + abs(self._short_momentum) * 50)
 
+            stop_loss = mid + sl_distance
+            take_profit = mid - tp_distance
+
+            logger.debug(f"[{symbol}] SELL signal: mid={mid:.5f}, SL={stop_loss:.5f} ({self.stop_loss_pips} pips), TP={take_profit:.5f} ({self.take_profit_pips} pips)")
+
             return self._emit_signal(Signal(
                 signal_type=SignalType.SELL,
                 symbol=symbol,
                 price=quote.bid_price,
                 strength=self._get_strength(confidence),
-                stop_loss=mid * (1 + self.stop_loss_pct),
-                take_profit=mid * (1 - self.take_profit_pct),
+                stop_loss=stop_loss,
+                take_profit=take_profit,
                 confidence=confidence,
                 metadata={
                     'short_momentum': self._short_momentum,
                     'medium_momentum': self._medium_momentum,
                     'trend_strength': self._trend_strength,
-                    'rsi': self._rsi
+                    'rsi': self._rsi,
+                    'sl_pips': self.stop_loss_pips,
+                    'tp_pips': self.take_profit_pips
                 }
             ))
 
@@ -235,13 +268,17 @@ class MomentumStrategy(BaseStrategy):
             return None
 
         mid = quote.mid_price
+        pip_value = self._get_pip_value(symbol)
+        trailing_distance = self.trailing_stop_pips * pip_value
 
         # Trailing stop
         if position.side == 'long':
             trailing_high = self._trailing_highs.get(symbol, position.entry_price)
-            trailing_stop = trailing_high * (1 - self.trailing_stop_pct)
+            trailing_stop = trailing_high - trailing_distance  # Baseado em pips
 
             if mid < trailing_stop:
+                profit_pips = (mid - position.entry_price) / pip_value
+                logger.info(f"[{symbol}] TRAILING STOP triggered: high={trailing_high:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
                 self._trailing_highs.pop(symbol, None)
                 return self._emit_signal(Signal(
                     signal_type=SignalType.CLOSE_LONG,
@@ -249,11 +286,18 @@ class MomentumStrategy(BaseStrategy):
                     price=mid,
                     strength=SignalStrength.STRONG,
                     confidence=0.9,
-                    metadata={'reason': 'trailing_stop', 'trigger_price': trailing_stop}
+                    metadata={
+                        'reason': 'trailing_stop',
+                        'trigger_price': trailing_stop,
+                        'trailing_pips': self.trailing_stop_pips,
+                        'profit_pips': profit_pips
+                    }
                 ))
 
             # Momentum reversal
             if self._short_momentum < -self.exit_threshold:
+                profit_pips = (mid - position.entry_price) / pip_value
+                logger.info(f"[{symbol}] MOMENTUM REVERSAL exit: profit={profit_pips:.1f} pips")
                 self._trailing_highs.pop(symbol, None)
                 return self._emit_signal(Signal(
                     signal_type=SignalType.CLOSE_LONG,
@@ -261,14 +305,20 @@ class MomentumStrategy(BaseStrategy):
                     price=mid,
                     strength=SignalStrength.MODERATE,
                     confidence=0.7,
-                    metadata={'reason': 'momentum_reversal', 'momentum': self._short_momentum}
+                    metadata={
+                        'reason': 'momentum_reversal',
+                        'momentum': self._short_momentum,
+                        'profit_pips': profit_pips
+                    }
                 ))
 
         else:  # Short
             trailing_low = self._trailing_lows.get(symbol, position.entry_price)
-            trailing_stop = trailing_low * (1 + self.trailing_stop_pct)
+            trailing_stop = trailing_low + trailing_distance  # Baseado em pips
 
             if mid > trailing_stop:
+                profit_pips = (position.entry_price - mid) / pip_value
+                logger.info(f"[{symbol}] TRAILING STOP triggered: low={trailing_low:.5f}, stop={trailing_stop:.5f}, profit={profit_pips:.1f} pips")
                 self._trailing_lows.pop(symbol, None)
                 return self._emit_signal(Signal(
                     signal_type=SignalType.CLOSE_SHORT,
@@ -276,11 +326,18 @@ class MomentumStrategy(BaseStrategy):
                     price=mid,
                     strength=SignalStrength.STRONG,
                     confidence=0.9,
-                    metadata={'reason': 'trailing_stop', 'trigger_price': trailing_stop}
+                    metadata={
+                        'reason': 'trailing_stop',
+                        'trigger_price': trailing_stop,
+                        'trailing_pips': self.trailing_stop_pips,
+                        'profit_pips': profit_pips
+                    }
                 ))
 
             # Momentum reversal
             if self._short_momentum > self.exit_threshold:
+                profit_pips = (position.entry_price - mid) / pip_value
+                logger.info(f"[{symbol}] MOMENTUM REVERSAL exit: profit={profit_pips:.1f} pips")
                 self._trailing_lows.pop(symbol, None)
                 return self._emit_signal(Signal(
                     signal_type=SignalType.CLOSE_SHORT,
@@ -288,7 +345,11 @@ class MomentumStrategy(BaseStrategy):
                     price=mid,
                     strength=SignalStrength.MODERATE,
                     confidence=0.7,
-                    metadata={'reason': 'momentum_reversal', 'momentum': self._short_momentum}
+                    metadata={
+                        'reason': 'momentum_reversal',
+                        'momentum': self._short_momentum,
+                        'profit_pips': profit_pips
+                    }
                 ))
 
         return None

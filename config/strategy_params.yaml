@@ -38,6 +38,24 @@ momentum:
   volume_filter: true
   min_volume_ratio: 1.5
 
+# HFT Risk Parameters (em pips, não percentagem)
+# Para EURUSD: 1 pip = 0.0001 = 10 pontos
+# 20 pontos = 2 pips
+hft_params:
+  # Stop Loss em pips (30 pips = 300 pontos)
+  stop_loss_pips: 30
+  # Take Profit em pips (2 pips = 20 pontos) - pequeno para HFT
+  take_profit_pips: 2
+  # Trailing Stop em pips (2 pips = 20 pontos)
+  trailing_stop_pips: 2
+  # Pip values por símbolo
+  pip_values:
+    EURUSD: 0.0001
+    GBPUSD: 0.0001
+    USDJPY: 0.01
+    XAUUSD: 0.01
+    default: 0.0001
+
 # Mean Reversion
 mean_reversion:
   enabled: true
