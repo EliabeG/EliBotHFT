@@ -515,7 +515,7 @@ class FXOpenClient:
         """Requisita informações da conta"""
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "GetAccount",
+            "Request": "Account",  # Correto: Account, não GetAccount
             "Params": {}
         }
 
@@ -551,11 +551,11 @@ class FXOpenClient:
         return None
 
     async def get_positions(self) -> List[TradePosition]:
-        """Obtém posições abertas"""
+        """Obtém posições/trades abertas"""
+        # Para conta Gross usamos "Trades", para Net usamos "Positions"
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "GetPositions",
-            "Params": {}
+            "Request": "Trades"  # Correto para conta Gross
         }
 
         response = await self._send_trade_request(request)
@@ -565,11 +565,15 @@ class FXOpenClient:
         positions = []
         for pos in response.get('Result', []):
             try:
+                # Filtrar apenas trades abertos
+                if pos.get('Status') not in ('Opened', 'PartiallyFilled'):
+                    continue
+
                 position = TradePosition(
                     position_id=str(pos.get('Id', '')),
                     symbol=pos.get('Symbol', ''),
                     side=pos.get('Side', ''),
-                    volume=float(pos.get('Volume', 0)),
+                    volume=float(pos.get('Amount', pos.get('Volume', 0))),
                     open_price=float(pos.get('Price', 0)),
                     open_time=datetime.now(),  # Parse do timestamp real se disponível
                     profit=float(pos.get('Profit', 0)),
@@ -636,7 +640,7 @@ class FXOpenClient:
             'Symbol': symbol,
             'Side': side.value,
             'Type': order_type.value,
-            'Volume': volume,
+            'Amount': volume,  # FXOpen usa 'Amount', não 'Volume'
             'Comment': comment
         }
 
@@ -649,7 +653,7 @@ class FXOpenClient:
 
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "Trade",
+            "Request": "TradeCreate",  # Correto: TradeCreate, não Trade
             "Params": params
         }
 
@@ -674,17 +678,24 @@ class FXOpenClient:
 
     async def close_position(self, position_id: str, volume: float = None) -> bool:
         """Fecha posição"""
-        params = {'PositionId': int(position_id)}
+        params = {
+            'Type': 'Close',
+            'Id': int(position_id)
+        }
         if volume:
-            params['Volume'] = volume
+            params['Amount'] = volume
 
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "ClosePosition",
+            "Request": "TradeDelete",  # Correto: TradeDelete, não ClosePosition
             "Params": params
         }
 
+        logger.info(f"Fechando posição: {json.dumps(request, indent=2)}")
+
         response = await self._send_trade_request(request)
+
+        logger.info(f"Resposta de fechamento: {json.dumps(response, indent=2) if response else 'None'}")
 
         if response and 'Result' in response:
             logger.info(f"Posição fechada: {position_id}")
