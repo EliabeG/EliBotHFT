@@ -1,0 +1,94 @@
+# EliBotHFT Strategy Parameters
+# Hot-reloadable configuration
+
+strategy:
+  name: "EliBotHFT_Scalper"
+  version: "1.0.0"
+  enabled: true
+  mode: "live"  # live, paper, backtest
+
+# Instrumentos ativos
+instruments:
+  - symbol: "XAUUSD"
+    enabled: true
+    priority: 1
+  - symbol: "EURUSD"
+    enabled: true
+    priority: 2
+  - symbol: "GBPUSD"
+    enabled: true
+    priority: 3
+
+# Parâmetros de Market Making / Scalping
+market_making:
+  spread_threshold_pips: 1.5
+  min_edge_pips: 0.3
+  quote_size_lots: 0.1
+  inventory_limit_lots: 0.5
+  skew_factor: 0.5
+  fade_rate: 0.1
+
+# Parâmetros de Momentum
+momentum:
+  enabled: true
+  lookback_ticks: 100
+  threshold_std: 2.0
+  entry_momentum_min: 0.0003
+  exit_momentum_min: 0.0001
+  volume_filter: true
+  min_volume_ratio: 1.5
+
+# Mean Reversion
+mean_reversion:
+  enabled: true
+  bollinger_period: 20
+  bollinger_std: 2.0
+  rsi_period: 14
+  rsi_oversold: 30
+  rsi_overbought: 70
+  entry_threshold: 0.8
+  exit_threshold: 0.5
+
+# Gestão de Ordens
+order_management:
+  order_type: "limit"  # limit, market, stop
+  time_in_force: "IOC"  # IOC, GTC, FOK
+  slippage_tolerance_pips: 0.5
+  partial_fill_action: "keep"  # keep, cancel
+  cancel_stale_orders_ms: 500
+  max_retries: 3
+
+# Timing
+timing:
+  tick_aggregation_ms: 50
+  signal_cooldown_ms: 100
+  position_hold_min_ms: 1000
+  position_hold_max_ms: 30000
+  session_start: "00:00"
+  session_end: "23:59"
+  avoid_news_minutes: 30
+
+# Filtros de Mercado
+market_filters:
+  min_liquidity_lots: 10.0
+  max_spread_pips: 3.0
+  volatility_filter: true
+  atr_period: 14
+  atr_min: 0.0005
+  atr_max: 0.005
+
+# Machine Learning (opcional)
+ml_signals:
+  enabled: false
+  model_path: "../data/models/signal_model.pkl"
+  confidence_threshold: 0.7
+  feature_window: 50
+  retrain_interval_hours: 24
+
+# Logging
+logging:
+  level: "INFO"
+  tick_logging: false
+  order_logging: true
+  performance_logging: true
+  latency_logging: true

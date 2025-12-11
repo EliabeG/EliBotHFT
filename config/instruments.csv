@@ -1,0 +1,10 @@
+symbol,id,description,pip_size,tick_size,digits,contract_size,min_lot,max_lot,lot_step,margin_currency,profit_currency,swap_long,swap_short,trading_hours
+XAUUSD,GOLD,Gold vs US Dollar,0.01,0.01,2,100,0.01,100.0,0.01,USD,USD,-5.5,-2.5,01:00-23:59
+EURUSD,EURUSD,Euro vs US Dollar,0.0001,0.00001,5,100000,0.01,100.0,0.01,EUR,USD,-6.4,1.2,00:00-23:59
+GBPUSD,GBPUSD,British Pound vs US Dollar,0.0001,0.00001,5,100000,0.01,100.0,0.01,GBP,USD,-4.8,0.5,00:00-23:59
+USDJPY,USDJPY,US Dollar vs Japanese Yen,0.01,0.001,3,100000,0.01,100.0,0.01,USD,JPY,1.8,-8.2,00:00-23:59
+AUDUSD,AUDUSD,Australian Dollar vs US Dollar,0.0001,0.00001,5,100000,0.01,100.0,0.01,AUD,USD,-3.2,-1.5,00:00-23:59
+USDCHF,USDCHF,US Dollar vs Swiss Franc,0.0001,0.00001,5,100000,0.01,100.0,0.01,USD,CHF,2.1,-7.5,00:00-23:59
+USDCAD,USDCAD,US Dollar vs Canadian Dollar,0.0001,0.00001,5,100000,0.01,100.0,0.01,USD,CAD,-2.0,-3.5,00:00-23:59
+NZDUSD,NZDUSD,New Zealand Dollar vs US Dollar,0.0001,0.00001,5,100000,0.01,100.0,0.01,NZD,USD,-2.8,-2.0,00:00-23:59
+BTCUSD,BTCUSD,Bitcoin vs US Dollar,0.01,0.01,2,1,0.01,10.0,0.01,BTC,USD,-15.0,-15.0,00:00-23:59

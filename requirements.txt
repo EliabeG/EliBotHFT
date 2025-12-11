@@ -1,0 +1,40 @@
+# EliBotHFT - Dependencies
+# Python 3.10+ required
+
+# Core async networking
+aiohttp>=3.9.0
+websockets>=12.0
+
+# Configuration
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Optional: Rich console UI
+rich>=13.0.0
+
+# Optional: Machine Learning for optimization
+# scikit-learn>=1.3.0
+# scipy>=1.11.0
+
+# Optional: Advanced optimization
+# optuna>=3.4.0
+# hyperopt>=0.2.7
+
+# Logging and monitoring
+structlog>=23.0.0
+
+# Type hints
+typing-extensions>=4.8.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Development
+black>=23.0.0
+isort>=5.12.0
+mypy>=1.5.0

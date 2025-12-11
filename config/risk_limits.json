@@ -1,0 +1,44 @@
+{
+    "risk_management": {
+        "max_daily_loss_usd": 500.0,
+        "max_daily_loss_percent": 5.0,
+        "max_drawdown_percent": 10.0,
+        "max_position_size_lots": 1.0,
+        "max_open_positions": 3,
+        "max_orders_per_minute": 60,
+        "max_orders_per_second": 5,
+        "stop_loss_pips": 20,
+        "take_profit_pips": 15,
+        "trailing_stop_pips": 10,
+        "risk_per_trade_percent": 1.0
+    },
+    "position_limits": {
+        "XAUUSD": {
+            "max_lots": 0.5,
+            "max_positions": 2
+        },
+        "EURUSD": {
+            "max_lots": 1.0,
+            "max_positions": 3
+        },
+        "GBPUSD": {
+            "max_lots": 1.0,
+            "max_positions": 3
+        },
+        "USDJPY": {
+            "max_lots": 1.0,
+            "max_positions": 3
+        }
+    },
+    "circuit_breaker": {
+        "enabled": true,
+        "consecutive_losses_limit": 5,
+        "cooldown_minutes": 30,
+        "daily_loss_halt_percent": 3.0
+    },
+    "margin_settings": {
+        "leverage": 500,
+        "min_free_margin_percent": 50.0,
+        "margin_call_level_percent": 100.0
+    }
+}
