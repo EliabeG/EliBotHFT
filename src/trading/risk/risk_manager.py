@@ -407,6 +407,10 @@ class RiskManager:
     def _check_margin(self, order: Order) -> RiskCheck:
         """Verifica margem disponível"""
         with self._lock:
+            # Se não temos info da conta ainda, permitir trade
+            if self._account_balance <= 0:
+                return RiskCheck(passed=True, message="Sem info de conta, permitindo trade")
+
             margin_pct = (self._free_margin / self._account_balance) * 100
 
             if margin_pct < self.limits.min_free_margin_percent:
