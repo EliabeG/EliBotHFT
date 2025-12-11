@@ -43,8 +43,8 @@ class RiskLimits:
     risk_per_trade_percent: float = 1.0
 
     # Ordens
-    max_orders_per_second: int = 5
-    max_orders_per_minute: int = 60
+    max_orders_per_second: int = 10
+    max_orders_per_minute: int = 200  # Aumentado para HFT
     max_slippage_pips: float = 2.0
 
     # Margem

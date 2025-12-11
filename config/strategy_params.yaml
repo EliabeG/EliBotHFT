@@ -61,9 +61,9 @@ order_management:
 # Timing
 timing:
   tick_aggregation_ms: 50
-  signal_cooldown_ms: 100
-  position_hold_min_ms: 1000
-  position_hold_max_ms: 30000
+  signal_cooldown_ms: 2000  # 2 segundos entre sinais (era 100ms)
+  position_hold_min_ms: 5000  # Mínimo 5 segundos por posição
+  position_hold_max_ms: 60000  # Máximo 1 minuto
   session_start: "00:00"
   session_end: "23:59"
   avoid_news_minutes: 30
