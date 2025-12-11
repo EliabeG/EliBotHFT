@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
-Test de Conexão - Verifica se o robô consegue conectar na FXOpen
+Test de Conexão - Verifica se o robô consegue conectar na FXOpen via WebSocket
 """
 
 import asyncio
 import sys
 import os
+import logging
+
+# Configurar logging detalhado
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Adicionar src ao path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -13,9 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from src.bindings.fxopen_client import FXOpenClient, FXOpenConfig
 
 async def test_connection():
-    """Testa conexão com FXOpen"""
+    """Testa conexão com FXOpen via WebSocket"""
     print("=" * 60)
-    print("  EliBotHFT - Teste de Conexão")
+    print("  EliBotHFT - Teste de Conexão WebSocket")
     print("=" * 60)
 
     # Configuração
@@ -29,14 +36,15 @@ async def test_connection():
         leverage=500
     )
 
-    print(f"\n[INFO] Conectando ao servidor: {config.server}")
-    print(f"[INFO] URL da API: {config.rest_url}")
+    print(f"\n[INFO] Servidor: {config.server}")
+    print(f"[INFO] Feed WebSocket: {config.feed_url}")
+    print(f"[INFO] Trade WebSocket: {config.trade_url}")
 
     client = FXOpenClient(config)
 
     try:
         # Tentar conectar
-        print("\n[1/4] Tentando conectar à API...")
+        print("\n[1/4] Conectando aos WebSockets...")
         connected = await client.connect()
 
         if connected:
@@ -44,7 +52,7 @@ async def test_connection():
 
             # Account info
             print("\n[2/4] Obtendo informações da conta...")
-            account = await client.get_account_info()
+            account = client.account
             if account:
                 print(f"[OK] Conta: {account.account_id}")
                 print(f"     Balance: ${account.balance:,.2f}")
@@ -54,15 +62,22 @@ async def test_connection():
             else:
                 print("[WARN] Não foi possível obter info da conta")
 
-            # Ticks
-            print("\n[3/4] Obtendo cotações...")
+            # Subscribe to ticks
+            print("\n[3/4] Inscrevendo para receber cotações...")
             symbols = ['XAUUSD', 'EURUSD']
+            await client.subscribe_ticks(symbols)
+
+            # Aguardar alguns ticks
+            print("[INFO] Aguardando ticks (5 segundos)...")
+            await asyncio.sleep(5)
+
+            # Mostrar quotes recebidas
             for symbol in symbols:
-                tick = await client.get_tick(symbol)
+                tick = client.quotes.get(symbol)
                 if tick:
                     print(f"[OK] {symbol}: Bid={tick.bid:.5f} Ask={tick.ask:.5f} Spread={tick.spread:.5f}")
                 else:
-                    print(f"[WARN] Não foi possível obter tick de {symbol}")
+                    print(f"[WARN] Não recebeu tick de {symbol}")
 
             # Posições
             print("\n[4/4] Verificando posições abertas...")
@@ -160,7 +175,7 @@ async def main():
 
     if not modules_ok:
         print("\n[ERRO] Alguns módulos falharam. Verifique os erros acima.")
-        return
+        return 1
 
     # Testar conexão
     print("\n")
@@ -175,11 +190,14 @@ async def main():
     print("=" * 60)
 
     if modules_ok and connection_ok:
-        print("\n✓ Todos os testes passaram! O robô está pronto para uso.")
+        print("\n[OK] Todos os testes passaram! O robô está pronto para uso.")
         print("\nPara iniciar o bot:")
         print("  python main.py --mode paper")
+        return 0
     else:
-        print("\n✗ Alguns testes falharam. Verifique os erros acima.")
+        print("\n[X] Alguns testes falharam. Verifique os erros acima.")
+        return 1
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

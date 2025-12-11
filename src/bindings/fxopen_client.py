@@ -1,6 +1,10 @@
 """
 FXOpen Client - Cliente para FXOpen TickTrader Web API
-Integração completa com a conta de trading
+Integração completa via WebSocket (Feed e Trade)
+
+Baseado na documentação oficial:
+- Feed: wss://server:3000 (Market Data)
+- Trade: wss://server:3001 (Trading)
 """
 
 import asyncio
@@ -10,6 +14,7 @@ import hmac
 import base64
 import time
 import json
+import uuid
 from typing import Dict, List, Optional, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -39,15 +44,17 @@ class FXOpenConfig:
     leverage: int = 500
     currency: str = 'USD'
 
-    # URLs
-    rest_url: str = field(default='')
-    ws_url: str = field(default='')
+    # WebSocket URLs (baseado na documentação oficial)
+    feed_port: int = 3000  # Market data
+    trade_port: int = 3001  # Trading
 
-    def __post_init__(self):
-        if not self.rest_url:
-            self.rest_url = f'https://{self.server}:8443/api/v2'
-        if not self.ws_url:
-            self.ws_url = f'wss://{self.server}:8443/api/v2/ws'
+    @property
+    def feed_url(self) -> str:
+        return f'wss://{self.server}:{self.feed_port}'
+
+    @property
+    def trade_url(self) -> str:
+        return f'wss://{self.server}:{self.trade_port}'
 
 
 class OrderSide(Enum):
@@ -118,13 +125,15 @@ class TradePosition:
 
 class FXOpenClient:
     """
-    Cliente para FXOpen TickTrader Web API
+    Cliente para FXOpen TickTrader Web API via WebSocket
 
-    Funcionalidades:
-    - Autenticação HMAC
-    - Market Data (ticks, quotes)
-    - Trading (ordens, posições)
-    - Account info
+    Arquitetura:
+    - Feed WebSocket (porta 3000): Market data, ticks, quotes
+    - Trade WebSocket (porta 3001): Account info, trading, positions
+
+    Autenticação:
+    - HMAC-SHA256 via mensagem Login no WebSocket
+    - Signature = Base64(HMAC-SHA256(timestamp + webApiId + webApiKey, secret))
     """
 
     def __init__(self, config: FXOpenConfig = None):
@@ -138,8 +147,11 @@ class FXOpenClient:
 
         # Estado
         self._connected = False
+        self._feed_connected = False
+        self._trade_connected = False
         self._session: Optional[aiohttp.ClientSession] = None
-        self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._feed_ws: Optional[aiohttp.ClientWebSocketResponse] = None
+        self._trade_ws: Optional[aiohttp.ClientWebSocketResponse] = None
 
         # Callbacks
         self._on_tick: List[Callable[[Tick], None]] = []
@@ -154,12 +166,20 @@ class FXOpenClient:
         # Subscriptions
         self._subscribed_symbols: set = set()
 
-        logger.info(f"FXOpenClient inicializado para {self.config.server}")
+        # Request tracking
+        self._pending_requests: Dict[str, asyncio.Future] = {}
 
-    def _generate_signature(self, timestamp: str, method: str,
-                           path: str, body: str = '') -> str:
-        """Gera assinatura HMAC-SHA256"""
-        message = f"{timestamp}{self.config.token_id}{self.config.token_key}{method}{path}{body}"
+        logger.info(f"FXOpenClient inicializado para {self.config.server}")
+        logger.info(f"Feed URL: {self.config.feed_url}")
+        logger.info(f"Trade URL: {self.config.trade_url}")
+
+    def _generate_signature(self, timestamp: int) -> str:
+        """
+        Gera assinatura HMAC-SHA256 conforme documentação FXOpen
+
+        Signature = Base64(HMAC-SHA256(timestamp + webApiId + webApiKey, secret))
+        """
+        message = f"{timestamp}{self.config.token_id}{self.config.token_key}"
 
         signature = hmac.new(
             self.config.token_secret.encode('utf-8'),
@@ -169,46 +189,174 @@ class FXOpenClient:
 
         return base64.b64encode(signature).decode('utf-8')
 
-    def _get_headers(self, method: str, path: str, body: str = '') -> Dict[str, str]:
-        """Gera headers de autenticação"""
-        timestamp = str(int(time.time() * 1000))
-        signature = self._generate_signature(timestamp, method, path, body)
+    def _create_login_request(self) -> dict:
+        """Cria mensagem de login conforme documentação"""
+        timestamp = int(time.time() * 1000)  # Milliseconds
+        signature = self._generate_signature(timestamp)
 
         return {
-            'Authorization': f'HMAC {self.config.token_id}:{self.config.token_key}:{timestamp}:{signature}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            "Id": str(uuid.uuid4()),
+            "Request": "Login",
+            "Params": {
+                "AuthType": self.config.auth_type,
+                "WebApiId": self.config.token_id,
+                "WebApiKey": self.config.token_key,
+                "Timestamp": timestamp,
+                "Signature": signature
+            }
         }
 
     async def connect(self) -> bool:
-        """Conecta à API"""
+        """Conecta aos WebSockets (Feed e Trade)"""
         try:
             # Criar sessão HTTP
             timeout = aiohttp.ClientTimeout(total=30)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            connector = aiohttp.TCPConnector(ssl=True)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
 
-            # Verificar conexão com chamada de account
-            account = await self.get_account_info()
-            if account:
-                self._connected = True
-                self._account_info = account
-                logger.info(f"Conectado! Conta: {account.account_id}, "
-                           f"Balance: {account.balance:.2f} {account.currency}")
-                return True
+            # Conectar ao Trade WebSocket primeiro (para account info)
+            logger.info(f"Conectando ao Trade WebSocket: {self.config.trade_url}")
+            trade_ok = await self._connect_trade_ws()
 
+            if trade_ok:
+                logger.info("Trade WebSocket conectado!")
+                self._trade_connected = True
+
+                # Conectar ao Feed WebSocket
+                logger.info(f"Conectando ao Feed WebSocket: {self.config.feed_url}")
+                feed_ok = await self._connect_feed_ws()
+
+                if feed_ok:
+                    logger.info("Feed WebSocket conectado!")
+                    self._feed_connected = True
+                    self._connected = True
+                    return True
+                else:
+                    logger.warning("Feed WebSocket falhou, mas Trade está ok")
+                    self._connected = True
+                    return True
+
+            logger.error("Falha ao conectar Trade WebSocket")
             return False
 
         except Exception as e:
             logger.error(f"Erro ao conectar: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def _connect_trade_ws(self) -> bool:
+        """Conecta ao WebSocket de Trading (porta 3001)"""
+        try:
+            self._trade_ws = await self._session.ws_connect(
+                self.config.trade_url,
+                heartbeat=30.0,
+                ssl=True
+            )
+
+            # Enviar login
+            login_request = self._create_login_request()
+            logger.debug(f"Enviando login request: {json.dumps(login_request, indent=2)}")
+            await self._trade_ws.send_json(login_request)
+
+            # Aguardar resposta
+            response = await asyncio.wait_for(
+                self._trade_ws.receive(),
+                timeout=10.0
+            )
+
+            if response.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(response.data)
+                logger.debug(f"Login response: {json.dumps(data, indent=2)}")
+
+                if data.get('Response') == 'Login' and data.get('Result') is not None:
+                    result = data.get('Result', {})
+                    if 'Error' in result:
+                        logger.error(f"Login falhou: {result['Error']}")
+                        return False
+
+                    logger.info("Login Trade bem-sucedido!")
+
+                    # Iniciar receiver
+                    asyncio.create_task(self._trade_ws_receiver())
+
+                    # Buscar account info
+                    await self._request_account_info()
+
+                    return True
+                else:
+                    logger.error(f"Resposta inesperada: {data}")
+                    return False
+
+            logger.error(f"Tipo de mensagem inesperado: {response.type}")
+            return False
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout aguardando resposta de login (Trade)")
+            return False
+        except Exception as e:
+            logger.error(f"Erro ao conectar Trade WS: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    async def _connect_feed_ws(self) -> bool:
+        """Conecta ao WebSocket de Feed (porta 3000)"""
+        try:
+            self._feed_ws = await self._session.ws_connect(
+                self.config.feed_url,
+                heartbeat=30.0,
+                ssl=True
+            )
+
+            # Enviar login
+            login_request = self._create_login_request()
+            await self._feed_ws.send_json(login_request)
+
+            # Aguardar resposta
+            response = await asyncio.wait_for(
+                self._feed_ws.receive(),
+                timeout=10.0
+            )
+
+            if response.type == aiohttp.WSMsgType.TEXT:
+                data = json.loads(response.data)
+                logger.debug(f"Feed Login response: {json.dumps(data, indent=2)}")
+
+                if data.get('Response') == 'Login':
+                    result = data.get('Result', {})
+                    if 'Error' in result:
+                        logger.error(f"Feed Login falhou: {result['Error']}")
+                        return False
+
+                    logger.info("Login Feed bem-sucedido!")
+
+                    # Iniciar receiver
+                    asyncio.create_task(self._feed_ws_receiver())
+                    return True
+
+            return False
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout aguardando resposta de login (Feed)")
+            return False
+        except Exception as e:
+            logger.error(f"Erro ao conectar Feed WS: {e}")
             return False
 
     async def disconnect(self) -> None:
-        """Desconecta da API"""
+        """Desconecta dos WebSockets"""
         self._connected = False
+        self._feed_connected = False
+        self._trade_connected = False
 
-        if self._ws:
-            await self._ws.close()
-            self._ws = None
+        if self._feed_ws and not self._feed_ws.closed:
+            await self._feed_ws.close()
+            self._feed_ws = None
+
+        if self._trade_ws and not self._trade_ws.closed:
+            await self._trade_ws.close()
+            self._trade_ws = None
 
         if self._session:
             await self._session.close()
@@ -216,41 +364,114 @@ class FXOpenClient:
 
         logger.info("Desconectado da FXOpen")
 
-    async def _request(self, method: str, endpoint: str,
-                      data: dict = None) -> Optional[dict]:
-        """Faz requisição HTTP autenticada"""
-        if not self._session:
-            logger.error("Sessão não inicializada")
-            return None
+    async def _trade_ws_receiver(self) -> None:
+        """Loop de recepção de mensagens do Trade WebSocket"""
+        while self._trade_ws and not self._trade_ws.closed:
+            try:
+                msg = await self._trade_ws.receive()
 
-        url = f"{self.config.rest_url}{endpoint}"
-        body = json.dumps(data) if data else ''
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    await self._handle_trade_message(data)
 
-        headers = self._get_headers(method.upper(), endpoint, body)
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    logger.warning("Trade WebSocket fechado")
+                    self._trade_connected = False
+                    break
 
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f"Trade WebSocket error: {self._trade_ws.exception()}")
+                    break
+
+            except Exception as e:
+                logger.error(f"Erro no Trade WS receiver: {e}")
+                await asyncio.sleep(1)
+
+    async def _feed_ws_receiver(self) -> None:
+        """Loop de recepção de mensagens do Feed WebSocket"""
+        while self._feed_ws and not self._feed_ws.closed:
+            try:
+                msg = await self._feed_ws.receive()
+
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = json.loads(msg.data)
+                    await self._handle_feed_message(data)
+
+                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                    logger.warning("Feed WebSocket fechado")
+                    self._feed_connected = False
+                    break
+
+                elif msg.type == aiohttp.WSMsgType.ERROR:
+                    logger.error(f"Feed WebSocket error: {self._feed_ws.exception()}")
+                    break
+
+            except Exception as e:
+                logger.error(f"Erro no Feed WS receiver: {e}")
+                await asyncio.sleep(1)
+
+    async def _handle_trade_message(self, data: dict) -> None:
+        """Processa mensagem do Trade WebSocket"""
+        response_type = data.get('Response', '')
+        request_id = data.get('Id', '')
+
+        # Resolver pending request
+        if request_id in self._pending_requests:
+            future = self._pending_requests.pop(request_id)
+            if not future.done():
+                future.set_result(data)
+            return
+
+        # Notificações
+        if 'Notify' in data:
+            notify_type = data.get('Notify', '')
+
+            if notify_type == 'PositionUpdate':
+                for cb in self._on_trade:
+                    try:
+                        cb(data)
+                    except Exception as e:
+                        logger.error(f"Erro no callback de trade: {e}")
+
+            elif notify_type == 'AccountUpdate':
+                result = data.get('Result', {})
+                if result:
+                    self._update_account_from_result(result)
+
+    async def _handle_feed_message(self, data: dict) -> None:
+        """Processa mensagem do Feed WebSocket"""
+        response_type = data.get('Response', '')
+
+        if response_type == 'FeedTick':
+            # Tick update
+            result = data.get('Result', {})
+            symbol = result.get('Symbol', '')
+
+            if symbol:
+                bid_best = result.get('BestBid', {})
+                ask_best = result.get('BestAsk', {})
+
+                tick = Tick(
+                    symbol=symbol,
+                    bid=float(bid_best.get('Price', 0)) if bid_best else 0,
+                    ask=float(ask_best.get('Price', 0)) if ask_best else 0,
+                    timestamp=datetime.now(),
+                    bid_volume=float(bid_best.get('Volume', 0)) if bid_best else 0,
+                    ask_volume=float(ask_best.get('Volume', 0)) if ask_best else 0
+                )
+
+                self._quotes[symbol] = tick
+
+                for cb in self._on_tick:
+                    try:
+                        cb(tick)
+                    except Exception as e:
+                        logger.error(f"Erro no callback de tick: {e}")
+
+    def _update_account_from_result(self, result: dict) -> None:
+        """Atualiza account info do resultado"""
         try:
-            async with self._session.request(
-                method, url, headers=headers, data=body if data else None
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    error = await response.text()
-                    logger.error(f"Erro {response.status}: {error}")
-                    return None
-
-        except Exception as e:
-            logger.error(f"Erro na requisição: {e}")
-            return None
-
-    async def get_account_info(self) -> Optional[AccountInfo]:
-        """Obtém informações da conta"""
-        result = await self._request('GET', '/account')
-        if not result:
-            return None
-
-        try:
-            return AccountInfo(
+            self._account_info = AccountInfo(
                 account_id=str(result.get('Id', '')),
                 balance=float(result.get('Balance', 0)),
                 equity=float(result.get('Equity', 0)),
@@ -262,50 +483,86 @@ class FXOpenClient:
             )
         except Exception as e:
             logger.error(f"Erro ao parsear account info: {e}")
+
+    async def _send_trade_request(self, request: dict, timeout: float = 10.0) -> Optional[dict]:
+        """Envia request ao Trade WebSocket e aguarda resposta"""
+        if not self._trade_ws or self._trade_ws.closed:
+            logger.error("Trade WebSocket não conectado")
             return None
 
-    async def get_symbols(self) -> List[dict]:
-        """Obtém lista de símbolos disponíveis"""
-        result = await self._request('GET', '/symbol')
-        return result if result else []
+        request_id = request.get('Id', str(uuid.uuid4()))
+        request['Id'] = request_id
+
+        # Criar future para aguardar resposta
+        future = asyncio.get_event_loop().create_future()
+        self._pending_requests[request_id] = future
+
+        try:
+            await self._trade_ws.send_json(request)
+            result = await asyncio.wait_for(future, timeout=timeout)
+            return result
+        except asyncio.TimeoutError:
+            self._pending_requests.pop(request_id, None)
+            logger.error(f"Timeout aguardando resposta para {request.get('Request', '')}")
+            return None
+        except Exception as e:
+            self._pending_requests.pop(request_id, None)
+            logger.error(f"Erro enviando request: {e}")
+            return None
+
+    async def _request_account_info(self) -> None:
+        """Requisita informações da conta"""
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "GetAccount",
+            "Params": {}
+        }
+
+        response = await self._send_trade_request(request)
+        if response and 'Result' in response:
+            self._update_account_from_result(response['Result'])
+
+    async def get_account_info(self) -> Optional[AccountInfo]:
+        """Obtém informações da conta"""
+        await self._request_account_info()
+        return self._account_info
 
     async def get_tick(self, symbol: str) -> Optional[Tick]:
         """Obtém tick atual de um símbolo"""
-        result = await self._request('GET', f'/tick/{symbol}')
-        if not result:
-            return None
+        if symbol in self._quotes:
+            return self._quotes[symbol]
 
-        try:
-            return Tick(
-                symbol=symbol,
-                bid=float(result.get('BestBid', {}).get('Price', 0)),
-                ask=float(result.get('BestAsk', {}).get('Price', 0)),
-                timestamp=datetime.now(),
-                bid_volume=float(result.get('BestBid', {}).get('Volume', 0)),
-                ask_volume=float(result.get('BestAsk', {}).get('Volume', 0))
-            )
-        except Exception as e:
-            logger.error(f"Erro ao parsear tick: {e}")
-            return None
+        # Requisitar via Feed WS
+        if self._feed_ws and not self._feed_ws.closed:
+            request = {
+                "Id": str(uuid.uuid4()),
+                "Request": "GetTick",
+                "Params": {
+                    "Symbol": symbol
+                }
+            }
+            await self._feed_ws.send_json(request)
 
-    async def get_ticks(self, symbols: List[str]) -> Dict[str, Tick]:
-        """Obtém ticks de múltiplos símbolos"""
-        ticks = {}
-        for symbol in symbols:
-            tick = await self.get_tick(symbol)
-            if tick:
-                ticks[symbol] = tick
-                self._quotes[symbol] = tick
-        return ticks
+            # Aguardar um pouco e retornar do cache
+            await asyncio.sleep(0.5)
+            return self._quotes.get(symbol)
+
+        return None
 
     async def get_positions(self) -> List[TradePosition]:
         """Obtém posições abertas"""
-        result = await self._request('GET', '/position')
-        if not result:
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "GetPositions",
+            "Params": {}
+        }
+
+        response = await self._send_trade_request(request)
+        if not response or 'Result' not in response:
             return []
 
         positions = []
-        for pos in result:
+        for pos in response.get('Result', []):
             try:
                 position = TradePosition(
                     position_id=str(pos.get('Id', '')),
@@ -313,7 +570,7 @@ class FXOpenClient:
                     side=pos.get('Side', ''),
                     volume=float(pos.get('Volume', 0)),
                     open_price=float(pos.get('Price', 0)),
-                    open_time=datetime.fromisoformat(pos.get('Created', '').replace('Z', '+00:00')),
+                    open_time=datetime.now(),  # Parse do timestamp real se disponível
                     profit=float(pos.get('Profit', 0)),
                     swap=float(pos.get('Swap', 0)),
                     commission=float(pos.get('Commission', 0)),
@@ -327,28 +584,54 @@ class FXOpenClient:
 
         return positions
 
+    async def subscribe_ticks(self, symbols: List[str]) -> bool:
+        """Inscreve para receber ticks via Feed WebSocket"""
+        if not self._feed_ws or self._feed_ws.closed:
+            logger.error("Feed WebSocket não conectado")
+            return False
+
+        for symbol in symbols:
+            request = {
+                "Id": str(uuid.uuid4()),
+                "Request": "FeedSubscribe",
+                "Params": {
+                    "Subscribe": [{
+                        "Symbol": symbol,
+                        "BookDepth": 1  # Top of book
+                    }]
+                }
+            }
+            await self._feed_ws.send_json(request)
+            self._subscribed_symbols.add(symbol)
+            logger.info(f"Inscrito para ticks de {symbol}")
+
+        return True
+
+    async def unsubscribe_ticks(self, symbols: List[str]) -> bool:
+        """Remove inscrição de ticks"""
+        if not self._feed_ws or self._feed_ws.closed:
+            return False
+
+        for symbol in symbols:
+            request = {
+                "Id": str(uuid.uuid4()),
+                "Request": "FeedUnsubscribe",
+                "Params": {
+                    "Unsubscribe": [symbol]
+                }
+            }
+            await self._feed_ws.send_json(request)
+            self._subscribed_symbols.discard(symbol)
+
+        return True
+
     async def open_position(self, symbol: str, side: OrderSide, volume: float,
                            order_type: OrderType = OrderType.MARKET,
                            price: float = None, stop_loss: float = None,
                            take_profit: float = None,
                            comment: str = 'EliBotHFT') -> Optional[str]:
-        """
-        Abre nova posição
-
-        Args:
-            symbol: Símbolo
-            side: Lado (BUY/SELL)
-            volume: Volume em lots
-            order_type: Tipo de ordem
-            price: Preço (para limit/stop)
-            stop_loss: Stop loss
-            take_profit: Take profit
-            comment: Comentário
-
-        Returns:
-            ID da posição ou None
-        """
-        data = {
+        """Abre nova posição"""
+        params = {
             'Symbol': symbol,
             'Side': side.value,
             'Type': order_type.value,
@@ -357,255 +640,49 @@ class FXOpenClient:
         }
 
         if price:
-            data['Price'] = price
+            params['Price'] = price
         if stop_loss:
-            data['StopLoss'] = stop_loss
+            params['StopLoss'] = stop_loss
         if take_profit:
-            data['TakeProfit'] = take_profit
+            params['TakeProfit'] = take_profit
 
-        result = await self._request('POST', '/trade', data)
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "Trade",
+            "Params": params
+        }
 
-        if result and 'Id' in result:
-            position_id = str(result['Id'])
-            logger.info(f"Posição aberta: {position_id} {side.value} {volume} {symbol}")
-            return position_id
+        response = await self._send_trade_request(request)
+
+        if response and 'Result' in response:
+            result = response['Result']
+            if 'Id' in result:
+                position_id = str(result['Id'])
+                logger.info(f"Posição aberta: {position_id} {side.value} {volume} {symbol}")
+                return position_id
 
         return None
 
     async def close_position(self, position_id: str, volume: float = None) -> bool:
-        """
-        Fecha posição
-
-        Args:
-            position_id: ID da posição
-            volume: Volume a fechar (None = tudo)
-
-        Returns:
-            True se fechado com sucesso
-        """
-        data = {'PositionId': position_id}
+        """Fecha posição"""
+        params = {'PositionId': int(position_id)}
         if volume:
-            data['Volume'] = volume
+            params['Volume'] = volume
 
-        result = await self._request('DELETE', f'/position/{position_id}', data)
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "ClosePosition",
+            "Params": params
+        }
 
-        if result:
+        response = await self._send_trade_request(request)
+
+        if response and 'Result' in response:
             logger.info(f"Posição fechada: {position_id}")
             self._positions.pop(position_id, None)
             return True
 
         return False
-
-    async def modify_position(self, position_id: str,
-                             stop_loss: float = None,
-                             take_profit: float = None) -> bool:
-        """
-        Modifica posição (SL/TP)
-
-        Args:
-            position_id: ID da posição
-            stop_loss: Novo stop loss
-            take_profit: Novo take profit
-
-        Returns:
-            True se modificado com sucesso
-        """
-        data = {'Id': position_id}
-        if stop_loss is not None:
-            data['StopLoss'] = stop_loss
-        if take_profit is not None:
-            data['TakeProfit'] = take_profit
-
-        result = await self._request('PUT', f'/position/{position_id}', data)
-        return result is not None
-
-    async def place_order(self, symbol: str, side: OrderSide, volume: float,
-                         order_type: OrderType, price: float,
-                         stop_loss: float = None, take_profit: float = None,
-                         time_in_force: TimeInForce = TimeInForce.GTC,
-                         expiration: datetime = None) -> Optional[str]:
-        """
-        Coloca ordem pendente
-
-        Args:
-            symbol: Símbolo
-            side: Lado
-            volume: Volume
-            order_type: Tipo
-            price: Preço
-            stop_loss: Stop loss
-            take_profit: Take profit
-            time_in_force: Validade
-            expiration: Data de expiração
-
-        Returns:
-            ID da ordem ou None
-        """
-        data = {
-            'Symbol': symbol,
-            'Side': side.value,
-            'Type': order_type.value,
-            'Volume': volume,
-            'Price': price,
-            'TimeInForce': time_in_force.value
-        }
-
-        if stop_loss:
-            data['StopLoss'] = stop_loss
-        if take_profit:
-            data['TakeProfit'] = take_profit
-        if expiration:
-            data['Expiration'] = expiration.isoformat()
-
-        result = await self._request('POST', '/order', data)
-
-        if result and 'Id' in result:
-            order_id = str(result['Id'])
-            logger.info(f"Ordem colocada: {order_id} {order_type.value} {side.value} {volume} {symbol} @ {price}")
-            return order_id
-
-        return None
-
-    async def cancel_order(self, order_id: str) -> bool:
-        """Cancela ordem pendente"""
-        result = await self._request('DELETE', f'/order/{order_id}')
-        if result:
-            logger.info(f"Ordem cancelada: {order_id}")
-            return True
-        return False
-
-    async def get_orders(self) -> List[dict]:
-        """Obtém ordens pendentes"""
-        result = await self._request('GET', '/order')
-        return result if result else []
-
-    async def get_history(self, from_time: datetime = None,
-                         to_time: datetime = None,
-                         limit: int = 100) -> List[dict]:
-        """Obtém histórico de trades"""
-        params = {'limit': limit}
-        if from_time:
-            params['from'] = from_time.isoformat()
-        if to_time:
-            params['to'] = to_time.isoformat()
-
-        # Construir query string
-        query = '&'.join(f"{k}={v}" for k, v in params.items())
-        endpoint = f'/tradehistory?{query}'
-
-        result = await self._request('GET', endpoint)
-        return result if result else []
-
-    # WebSocket Methods
-
-    async def connect_websocket(self) -> bool:
-        """Conecta ao WebSocket para streaming"""
-        if not self._session:
-            await self.connect()
-
-        try:
-            # Headers de autenticação para WS
-            headers = self._get_headers('GET', '/ws')
-
-            self._ws = await self._session.ws_connect(
-                self.config.ws_url,
-                headers=headers,
-                heartbeat=30.0
-            )
-
-            logger.info("WebSocket conectado")
-
-            # Iniciar receiver
-            asyncio.create_task(self._ws_receiver())
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Erro ao conectar WebSocket: {e}")
-            return False
-
-    async def _ws_receiver(self) -> None:
-        """Loop de recepção de mensagens WebSocket"""
-        while self._ws and not self._ws.closed:
-            try:
-                msg = await self._ws.receive()
-
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    await self._handle_ws_message(data)
-
-                elif msg.type == aiohttp.WSMsgType.CLOSED:
-                    logger.warning("WebSocket fechado")
-                    break
-
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    logger.error(f"WebSocket error: {self._ws.exception()}")
-                    break
-
-            except Exception as e:
-                logger.error(f"Erro no WS receiver: {e}")
-                await asyncio.sleep(1)
-
-    async def _handle_ws_message(self, data: dict) -> None:
-        """Processa mensagem do WebSocket"""
-        msg_type = data.get('Type', '')
-
-        if msg_type == 'Tick':
-            tick = Tick(
-                symbol=data.get('Symbol', ''),
-                bid=float(data.get('Bid', 0)),
-                ask=float(data.get('Ask', 0)),
-                timestamp=datetime.now()
-            )
-            self._quotes[tick.symbol] = tick
-
-            for cb in self._on_tick:
-                try:
-                    cb(tick)
-                except Exception as e:
-                    logger.error(f"Erro no callback de tick: {e}")
-
-        elif msg_type in ('TradeExecuted', 'PositionOpened', 'PositionClosed'):
-            for cb in self._on_trade:
-                try:
-                    cb(data)
-                except Exception as e:
-                    logger.error(f"Erro no callback de trade: {e}")
-
-        elif msg_type == 'AccountInfo':
-            # Atualizar account info
-            pass
-
-    async def subscribe_ticks(self, symbols: List[str]) -> bool:
-        """Inscreve para receber ticks"""
-        if not self._ws:
-            await self.connect_websocket()
-
-        for symbol in symbols:
-            msg = {
-                'Type': 'SubscribeTick',
-                'Symbol': symbol
-            }
-            await self._ws.send_json(msg)
-            self._subscribed_symbols.add(symbol)
-            logger.info(f"Inscrito para ticks de {symbol}")
-
-        return True
-
-    async def unsubscribe_ticks(self, symbols: List[str]) -> bool:
-        """Remove inscrição de ticks"""
-        if not self._ws:
-            return False
-
-        for symbol in symbols:
-            msg = {
-                'Type': 'UnsubscribeTick',
-                'Symbol': symbol
-            }
-            await self._ws.send_json(msg)
-            self._subscribed_symbols.discard(symbol)
-
-        return True
 
     def register_tick_callback(self, callback: Callable[[Tick], None]) -> None:
         """Registra callback para ticks"""
