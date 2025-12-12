@@ -850,7 +850,7 @@ class ErrorClassifier:
             'average_severity': avg_severity,
             'average_pnl_impact': avg_pnl_impact,
             'error_rate_by_strategy': {
-                s: self.error_counts[s]
+                s: {et.name: count for et, count in self.error_counts[s].items()}
                 for s in self.error_counts
             }
         }
