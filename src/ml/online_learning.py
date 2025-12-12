@@ -755,6 +755,10 @@ class IncrementalSGD:
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """Get probability predictions"""
         logits = X @ self.weights + self.bias
+        if self.output_size == 1:
+            # Binary classification: use sigmoid and return [1-p, p]
+            p = 1 / (1 + np.exp(-np.clip(logits, -500, 500)))
+            return np.column_stack([1 - p.flatten(), p.flatten()])
         return self._softmax(logits)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -763,7 +767,8 @@ class IncrementalSGD:
 
     def predict_class(self, X: np.ndarray) -> np.ndarray:
         """Get class predictions"""
-        return np.argmax(self.predict_proba(X), axis=1)
+        proba = self.predict_proba(X)
+        return np.argmax(proba, axis=1)
 
     def _softmax(self, x: np.ndarray) -> np.ndarray:
         exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))

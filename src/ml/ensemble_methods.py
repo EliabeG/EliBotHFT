@@ -142,7 +142,8 @@ class SimpleNeuralNet:
         return pred
 
     def predict_class(self, X: np.ndarray) -> np.ndarray:
-        return np.argmax(self.predict(X), axis=1)
+        proba = self.predict_proba(X)
+        return np.argmax(proba, axis=1)
 
 
 class DecisionStump:
