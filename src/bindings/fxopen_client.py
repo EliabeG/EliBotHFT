@@ -464,8 +464,8 @@ class FXOpenClient:
         """Processa mensagem do Feed WebSocket"""
         response_type = data.get('Response', '')
 
-        if response_type == 'FeedTick':
-            # Tick update
+        if response_type == 'FeedTick' or response_type == 'Tick':
+            # Tick update (subscription ou polling)
             result = data.get('Result', {})
             symbol = result.get('Symbol', '')
 
@@ -492,9 +492,13 @@ class FXOpenClient:
                         cb(tick)
                     except Exception as e:
                         logger.error(f"Erro no callback de tick: {e}")
+        elif response_type == 'FeedSubscribe':
+            # Confirmação de inscrição
+            result = data.get('Result', {})
+            logger.info(f"FeedSubscribe confirmado: {result}")
         else:
-            # Log outras mensagens do feed para debug
-            logger.debug(f"Feed message: {response_type}")
+            # Log outras mensagens do feed
+            logger.info(f"Feed message não tratada: {response_type} - {data}")
 
     def _update_account_from_result(self, result: dict) -> None:
         """Atualiza account info do resultado"""
