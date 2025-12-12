@@ -5,36 +5,81 @@
         "max_drawdown_percent": 10.0,
         "max_position_size_lots": 1.0,
         "max_open_positions": 3,
-        "max_orders_per_minute": 60,
+        "max_orders_per_minute": 100,
         "max_orders_per_second": 5,
         "stop_loss_pips": 20,
         "take_profit_pips": 15,
         "trailing_stop_pips": 10,
         "risk_per_trade_percent": 1.0
     },
+    "advanced_risk": {
+        "max_var_95_percent": 2.0,
+        "max_var_99_percent": 3.0,
+        "max_daily_drawdown_percent": 3.0,
+        "max_weekly_drawdown_percent": 5.0,
+        "max_total_drawdown_percent": 10.0,
+        "drawdown_recovery_factor": 0.5,
+        "max_position_lots": 1.0,
+        "max_notional_usd": 100000.0,
+        "max_open_positions": 3,
+        "max_correlated_exposure": 1.5,
+        "max_volatility_percentile": 90.0,
+        "volatility_scaling": true,
+        "kelly_fraction_limit": 0.25,
+        "min_position_size": 0.01,
+        "position_size_step": 0.01,
+        "max_orders_per_second": 5,
+        "max_orders_per_minute": 100,
+        "max_daily_trades": 500,
+        "consecutive_losses_limit": 5,
+        "cooldown_minutes_base": 15,
+        "cooldown_multiplier": 1.5,
+        "max_slippage_pips": 2.0,
+        "slippage_monitoring_window": 20,
+        "session_max_loss_percent": 2.0,
+        "session_profit_lock_percent": 3.0
+    },
     "position_limits": {
         "EURUSD": {
             "max_lots": 1.0,
-            "max_positions": 3
+            "max_positions": 3,
+            "max_notional_usd": 100000.0
         },
         "GBPUSD": {
-            "max_lots": 1.0,
-            "max_positions": 3
+            "max_lots": 0.5,
+            "max_positions": 2,
+            "max_notional_usd": 50000.0
         },
         "USDJPY": {
-            "max_lots": 1.0,
-            "max_positions": 3
+            "max_lots": 0.5,
+            "max_positions": 2,
+            "max_notional_usd": 50000.0
         }
     },
     "circuit_breaker": {
         "enabled": true,
         "consecutive_losses_limit": 5,
-        "cooldown_minutes": 30,
-        "daily_loss_halt_percent": 3.0
+        "cooldown_minutes": 15,
+        "cooldown_multiplier": 1.5,
+        "daily_loss_halt_percent": 3.0,
+        "adaptive": true
     },
     "margin_settings": {
         "leverage": 500,
         "min_free_margin_percent": 50.0,
-        "margin_call_level_percent": 100.0
+        "margin_call_level_percent": 100.0,
+        "margin_warning_level_percent": 150.0
+    },
+    "volatility_regime": {
+        "low_volatility_threshold": 20,
+        "high_volatility_threshold": 80,
+        "extreme_volatility_threshold": 95,
+        "regime_change_cooldown_seconds": 60
+    },
+    "performance_tracking": {
+        "min_trades_for_kelly": 20,
+        "sharpe_calculation_window": 252,
+        "win_rate_window": 50,
+        "adaptive_sizing": true
     }
 }
