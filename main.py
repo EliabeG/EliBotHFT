@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument(
         '--symbols', '-s',
         nargs='+',
-        default=['XAUUSD', 'EURUSD'],
+        default=['EURUSD'],
         help='Símbolos para operar'
     )
 
