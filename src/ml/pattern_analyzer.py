@@ -400,10 +400,9 @@ class PatternAnalyzer:
                 if n > 1:
                     # Welford's algorithm for variance
                     old_std = self.feature_stds[feature_name]
-                    self.feature_stds[feature_name] = np.sqrt(
-                        ((n - 2) * old_std ** 2 + (value - old_mean) * (value - self.feature_means[feature_name]))
-                        / (n - 1)
-                    )
+                    variance = ((n - 2) * old_std ** 2 + (value - old_mean) * (value - self.feature_means[feature_name])) / (n - 1)
+                    # Evitar sqrt de número negativo devido a imprecisão de ponto flutuante
+                    self.feature_stds[feature_name] = np.sqrt(max(0, variance))
 
     def _update_sequences(self, error: TradeError):
         """Update error sequence analysis"""
