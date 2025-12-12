@@ -1,52 +1,227 @@
 # EliBotHFT Strategy Parameters
 # Hot-reloadable configuration
+# Versão 2.0 - Estratégias HFT Avançadas para EURUSD
 
 strategy:
-  name: "EliBotHFT_Scalper"
-  version: "1.0.0"
+  name: "EliBotHFT_Pro"
+  version: "2.0.0"
   enabled: true
   mode: "live"  # live, paper, backtest
 
-# Instrumentos ativos
+# ============================================================
+# INSTRUMENTOS ATIVOS
+# ============================================================
 instruments:
   - symbol: "EURUSD"
     enabled: true
     priority: 1
-  - symbol: "GBPUSD"
-    enabled: false  # Desativado
-    priority: 2
+    pip_size: 0.0001
+    tick_size: 0.00001
+    contract_size: 100000
+    min_lot: 0.01
+    max_lot: 10.0
 
-# Parâmetros de Market Making / Scalping
+# ============================================================
+# ORQUESTRADOR DE ESTRATÉGIAS
+# ============================================================
+orchestrator:
+  enabled: true
+  aggregation_method: "weighted_vote"  # weighted_vote, highest_confidence, unanimous, majority
+  min_confidence: 0.5
+  min_strategies_agree: 2
+  signal_cooldown_ms: 1000
+
+# ============================================================
+# ESTRATÉGIA: MARKET MAKING
+# Captura spread bid-ask com gerenciamento de inventário
+# ============================================================
 market_making:
-  spread_threshold_pips: 1.5
-  min_edge_pips: 0.3
-  quote_size_lots: 0.1
-  inventory_limit_lots: 0.5
-  skew_factor: 0.5
-  fade_rate: 0.1
+  enabled: true
+  weight: 1.0
 
-# Parâmetros de Momentum
+  # Parâmetros de Spread
+  min_spread_pips: 0.3
+  target_spread_pips: 0.5
+  max_spread_pips: 2.0
+
+  # Inventário
+  max_inventory_lots: 0.5
+  inventory_skew_factor: 0.5
+  target_inventory: 0.0
+
+  # Proteção
+  volatility_multiplier: 1.5
+  min_edge_pips: 0.1
+
+  # Risk
+  stop_loss_pips: 10
+  take_profit_pips: 3
+  max_holding_time_ms: 30000
+
+  # Filtros
+  min_book_depth: 3
+  max_imbalance: 0.7
+
+# ============================================================
+# ESTRATÉGIA: MEAN REVERSION
+# Reversão à média baseada em Bollinger Bands e Z-Score
+# ============================================================
+mean_reversion:
+  enabled: true
+  weight: 1.0
+
+  # Janelas
+  lookback_period: 50
+  short_period: 10
+
+  # Bollinger Bands
+  bb_period: 20
+  bb_std: 2.0
+
+  # Z-Score Thresholds
+  entry_z_score: 2.0
+  exit_z_score: 0.5
+  extreme_z_score: 3.0
+
+  # Risk
+  stop_loss_pips: 15
+  take_profit_pips: 8
+  max_holding_ticks: 500
+
+  # Filtros de Regime
+  min_bandwidth: 0.0005
+  max_bandwidth: 0.005
+  trend_filter_period: 100
+  max_trend_strength: 0.3
+
+# ============================================================
+# ESTRATÉGIA: BREAKOUT
+# Rompimento de níveis com ATR
+# ============================================================
+breakout:
+  enabled: true
+  weight: 1.0
+
+  # ATR
+  atr_fast_period: 10
+  atr_slow_period: 50
+  atr_multiplier: 1.5
+
+  # Níveis
+  level_lookback: 100
+  level_tolerance_pips: 2.0
+  min_level_touches: 2
+
+  # Confirmação
+  breakout_confirmation_ticks: 3
+  min_breakout_distance_pips: 1.0
+  volatility_expansion_threshold: 1.5
+
+  # Risk
+  stop_loss_atr_multiplier: 1.5
+  take_profit_atr_multiplier: 2.0
+  max_stop_loss_pips: 20
+  min_risk_reward: 1.5
+
+  # Filtros
+  min_volume_increase: 1.2
+  momentum_confirmation: true
+
+# ============================================================
+# ESTRATÉGIA: ORDER FLOW
+# Análise de microestrutura de mercado
+# ============================================================
+order_flow:
+  enabled: true
+  weight: 1.0
+
+  # Imbalance
+  imbalance_threshold: 0.4
+  strong_imbalance_threshold: 0.6
+  imbalance_levels: 5
+
+  # Delta
+  delta_threshold: 0.3
+  cumulative_delta_period: 50
+
+  # Detecção de ordens grandes
+  large_order_multiplier: 3.0
+  sweep_detection_levels: 3
+
+  # Risk
+  stop_loss_pips: 8
+  take_profit_pips: 5
+  trailing_stop_pips: 3
+
+  # Filtros
+  min_book_depth: 5
+  max_spread_pips: 1.5
+  confirmation_ticks: 2
+
+# ============================================================
+# ESTRATÉGIA: MOMENTUM
+# Detecção de momentum multi-timeframe
+# ============================================================
 momentum:
   enabled: true
-  lookback_ticks: 100
-  threshold_std: 2.0
-  entry_momentum_min: 0.0003
-  exit_momentum_min: 0.0001
-  volume_filter: true
-  min_volume_ratio: 1.5
+  weight: 1.0
 
-# HFT Risk Parameters (em pips, não percentagem)
-# Para EURUSD: 1 pip = 0.0001 = 10 pontos
-# Com 0.01 lot: 1 pip = $0.10, comissão ~$0.03/lado
-hft_params:
-  # Stop Loss em pips (30 pips = 300 pontos)
+  # Timeframes
+  short_window: 10
+  medium_window: 30
+  long_window: 100
+
+  # Thresholds
+  entry_threshold: 0.0001  # 0.01%
+  exit_threshold: 0.00005  # 0.005%
+  confirmation_ratio: 0.5
+
+  # Risk
   stop_loss_pips: 30
-  # Take Profit em pips (5 pips = 50 pontos = ~$0.50)
   take_profit_pips: 5
-  # Trailing Stop distance em pips (2 pips = 20 pontos)
   trailing_stop_pips: 2
-  # Lucro mínimo antes de ativar trailing (para cobrir comissão)
-  # 1 pip = $0.10, cobre $0.06 de comissão round-trip
+  min_profit_to_trail_pips: 1
+
+  # Filtros
+  volume_filter: true
+  min_volume_ratio: 1.2
+
+# ============================================================
+# ESTRATÉGIA: SCALPING
+# Opera em micro movimentos de preço
+# ============================================================
+scalping:
+  enabled: true
+  weight: 0.8
+
+  # Spread
+  min_spread_pips: 0.5
+  max_spread_pips: 3.0
+  min_edge_pips: 0.3
+  pip_size: 0.0001
+
+  # Order Book
+  imbalance_threshold: 0.3
+
+  # Momentum
+  momentum_window: 20
+  momentum_threshold: 0.0002
+
+  # Risk
+  stop_loss_pips: 5
+  take_profit_pips: 3
+
+# ============================================================
+# PARÂMETROS HFT GLOBAIS
+# ============================================================
+hft_params:
+  # Stop Loss padrão em pips
+  stop_loss_pips: 30
+  # Take Profit padrão em pips
+  take_profit_pips: 5
+  # Trailing Stop distance em pips
+  trailing_stop_pips: 2
+  # Lucro mínimo antes de ativar trailing
   min_profit_to_trail_pips: 1
   # Pip values por símbolo
   pip_values:
@@ -55,57 +230,93 @@ hft_params:
     USDJPY: 0.01
     default: 0.0001
 
-# Mean Reversion
-mean_reversion:
-  enabled: true
-  bollinger_period: 20
-  bollinger_std: 2.0
-  rsi_period: 14
-  rsi_oversold: 30
-  rsi_overbought: 70
-  entry_threshold: 0.8
-  exit_threshold: 0.5
-
-# Gestão de Ordens
+# ============================================================
+# GESTÃO DE ORDENS
+# ============================================================
 order_management:
-  order_type: "limit"  # limit, market, stop
-  time_in_force: "IOC"  # IOC, GTC, FOK
+  order_type: "market"  # market para HFT (IOC)
+  time_in_force: "IOC"  # Immediate or Cancel
   slippage_tolerance_pips: 0.5
-  partial_fill_action: "keep"  # keep, cancel
+  partial_fill_action: "keep"
   cancel_stale_orders_ms: 500
   max_retries: 3
+  max_order_age_ms: 1000
 
-# Timing
+# ============================================================
+# TIMING
+# ============================================================
 timing:
   tick_aggregation_ms: 50
-  signal_cooldown_ms: 2000  # 2 segundos entre sinais (era 100ms)
-  position_hold_min_ms: 5000  # Mínimo 5 segundos por posição
-  position_hold_max_ms: 60000  # Máximo 1 minuto
+  signal_cooldown_ms: 1000  # 1 segundo entre sinais
+  position_hold_min_ms: 5000
+  position_hold_max_ms: 300000  # 5 minutos
   session_start: "00:00"
   session_end: "23:59"
   avoid_news_minutes: 30
 
-# Filtros de Mercado
+# ============================================================
+# FILTROS DE MERCADO
+# ============================================================
 market_filters:
-  min_liquidity_lots: 10.0
-  max_spread_pips: 3.0
+  min_liquidity_lots: 5.0
+  max_spread_pips: 2.0
   volatility_filter: true
   atr_period: 14
-  atr_min: 0.0005
-  atr_max: 0.005
+  atr_min: 0.0003
+  atr_max: 0.003
 
-# Machine Learning (opcional)
-ml_signals:
-  enabled: false
-  model_path: "../data/models/signal_model.pkl"
-  confidence_threshold: 0.7
-  feature_window: 50
-  retrain_interval_hours: 24
+# ============================================================
+# REGIME DETECTION
+# Pesos das estratégias por regime
+# ============================================================
+regime_weights:
+  trending_up:
+    momentum: 1.5
+    breakout: 1.3
+    mean_reversion: 0.3
+    market_making: 0.5
+    order_flow: 1.0
+    scalping: 0.7
 
-# Logging
+  trending_down:
+    momentum: 1.5
+    breakout: 1.3
+    mean_reversion: 0.3
+    market_making: 0.5
+    order_flow: 1.0
+    scalping: 0.7
+
+  ranging:
+    momentum: 0.5
+    breakout: 0.3
+    mean_reversion: 1.5
+    market_making: 1.3
+    order_flow: 1.0
+    scalping: 1.2
+
+  volatile:
+    momentum: 0.7
+    breakout: 1.5
+    mean_reversion: 0.5
+    market_making: 0.3
+    order_flow: 1.2
+    scalping: 0.5
+
+  quiet:
+    momentum: 0.3
+    breakout: 0.2
+    mean_reversion: 1.2
+    market_making: 1.5
+    order_flow: 0.8
+    scalping: 1.0
+
+# ============================================================
+# LOGGING
+# ============================================================
 logging:
   level: "INFO"
   tick_logging: false
   order_logging: true
   performance_logging: true
   latency_logging: true
+  strategy_signals_logging: true
