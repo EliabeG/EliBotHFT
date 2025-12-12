@@ -11,14 +11,13 @@ Funcionalidades:
 """
 
 import os
-import sys
 import json
 import csv
 import time
 import asyncio
 import logging
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 import random
@@ -263,7 +262,7 @@ class BacktestEngine:
             self._equity_curve.append(self._calculate_equity(bar.close))
 
         # Fechar posição aberta no final
-        if self._position:
+        if self._position and bars:
             self._close_position(bars[-1].close, 'end_of_data')
 
         # Calcular métricas
@@ -723,23 +722,27 @@ class MLOptimizer:
         keys = list(param_values.keys())
         values_lists = [param_values[k] for k in keys]
 
-        best_result = None
-
         for i, combo in enumerate(itertools.product(*values_lists)):
             config = dict(zip(keys, combo))
             result = self.run_backtest(config)
             self._results.append(result)
 
-            if best_result is None or result.fitness > best_result.fitness:
-                best_result = result
+            if self._best_result is None or result.fitness > self._best_result.fitness:
+                self._best_result = result
                 logger.info(f"[{i+1}] Nova melhor config: fitness={result.fitness:.2f}, "
                            f"win_rate={result.win_rate:.2%}, pnl=${result.total_pnl:.2f}")
 
             if (i + 1) % 100 == 0:
                 logger.info(f"Progresso: {i+1}/{total_combinations}")
 
-        self._best_result = best_result
-        return best_result
+        # Garantir retorno de resultado válido
+        if self._best_result is None:
+            # Se nenhum resultado, criar um com config padrão
+            default_config = {k: r['min'] for k, r in self.config.param_ranges.items()}
+            self._best_result = self.run_backtest(default_config)
+            self._results.append(self._best_result)
+
+        return self._best_result
 
     def optimize_random_search(self) -> BacktestResult:
         """Otimização via Random Search"""
@@ -766,6 +769,12 @@ class MLOptimizer:
 
             if (i + 1) % 10 == 0:
                 logger.info(f"Progresso: {i+1}/{self.config.max_iterations}")
+
+        # Garantir retorno de resultado válido
+        if self._best_result is None:
+            default_config = {k: r['min'] for k, r in self.config.param_ranges.items()}
+            self._best_result = self.run_backtest(default_config)
+            self._results.append(self._best_result)
 
         return self._best_result
 
@@ -837,8 +846,15 @@ class MLOptimizer:
             population = new_population
 
             if (gen + 1) % 5 == 0:
-                logger.info(f"Geração {gen+1}/{self.config.max_iterations}, "
-                           f"melhor fitness: {self._best_result.fitness:.2f}")
+                if self._best_result:
+                    logger.info(f"Geração {gen+1}/{self.config.max_iterations}, "
+                               f"melhor fitness: {self._best_result.fitness:.2f}")
+
+        # Garantir retorno de resultado válido
+        if self._best_result is None:
+            default_config = {k: r['min'] for k, r in self.config.param_ranges.items()}
+            self._best_result = self.run_backtest(default_config)
+            self._results.append(self._best_result)
 
         return self._best_result
 
@@ -979,15 +995,20 @@ async def main():
 
     stats = optimizer.get_statistics()
     print(f"Total de iterações: {stats['total_iterations']}")
-    print(f"\nMelhor configuração encontrada:")
-    print(f"  Fitness: {stats['best_fitness']:.2f}")
-    print(f"  Win Rate: {stats['best_win_rate']:.2%}")
-    print(f"  Total P&L: ${stats['best_pnl']:.2f}")
-    print(f"  Sharpe Ratio: {stats['best_sharpe']:.2f}")
 
-    print(f"\nParâmetros:")
-    for k, v in stats['best_config'].items():
-        print(f"  {k}: {v}")
+    # Verificar se há resultados válidos
+    if stats['best_config'] is None:
+        print("\nNenhum resultado válido encontrado na otimização.")
+    else:
+        print(f"\nMelhor configuração encontrada:")
+        print(f"  Fitness: {stats['best_fitness']:.2f}")
+        print(f"  Win Rate: {stats['best_win_rate']:.2%}")
+        print(f"  Total P&L: ${stats['best_pnl']:.2f}")
+        print(f"  Sharpe Ratio: {stats['best_sharpe']:.2f}")
+
+        print(f"\nParâmetros:")
+        for k, v in stats['best_config'].items():
+            print(f"  {k}: {v}")
 
     print("\nResultados salvos em:")
     print(f"  - {config.best_config_path}")
