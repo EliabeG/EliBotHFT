@@ -42,8 +42,8 @@ async def simulate_trading():
 
     # Order Books
     books = {
-        'EURUSD': OrderBook('EURUSD', tick_size=0.00001),
-        'GBPUSD': OrderBook('GBPUSD', tick_size=0.00001)
+        'XAUUSD': OrderBook('XAUUSD', tick_size=0.01),
+        'EURUSD': OrderBook('EURUSD', tick_size=0.00001)
     }
     print("[OK] Order Books criados")
 
@@ -70,8 +70,8 @@ async def simulate_trading():
 
     # Preços base
     prices = {
-        'EURUSD': 1.1000,
-        'GBPUSD': 1.2700
+        'XAUUSD': 2000.0,
+        'EURUSD': 1.1000
     }
 
     # Callback para sinais
@@ -107,7 +107,7 @@ async def simulate_trading():
 
     for i in range(500):
         # Escolher símbolo aleatório
-        symbol = random.choice(['EURUSD', 'GBPUSD'])
+        symbol = random.choice(['XAUUSD', 'EURUSD'])
 
         # Gerar tick
         tick_start = latency_logger.start_timer()

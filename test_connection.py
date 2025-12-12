@@ -64,7 +64,7 @@ async def test_connection():
 
             # Subscribe to ticks
             print("\n[3/4] Inscrevendo para receber cotações...")
-            symbols = ['EURUSD', 'GBPUSD']
+            symbols = ['XAUUSD', 'EURUSD']
             await client.subscribe_ticks(symbols)
 
             # Aguardar alguns ticks
@@ -139,11 +139,11 @@ async def test_modules():
     try:
         print("[4/6] Testando trading.book...")
         from src.trading.book import OrderBook
-        book = OrderBook('EURUSD')
-        book.update(0, 1.10050, 100)  # Bid
-        book.update(1, 1.10060, 100)  # Ask
+        book = OrderBook('XAUUSD')
+        book.update(0, 2000.50, 100)  # Bid
+        book.update(1, 2000.60, 100)  # Ask
         quote = book.get_quote()
-        print(f"[OK] OrderBook: bid={quote.bid_price} ask={quote.ask_price} spread={quote.spread:.5f}")
+        print(f"[OK] OrderBook: bid={quote.bid_price} ask={quote.ask_price} spread={quote.spread:.2f}")
     except Exception as e:
         print(f"[ERRO] {e}")
         modules_ok = False
