@@ -341,9 +341,11 @@ class FIXEngine:
 
         logger.warning(f"Desconexão detectada. Tentativa de reconexão {self._stats.reconnect_count}")
 
-        # Tentar reconectar
+        # Tentar reconectar com backoff exponencial limitado
+        max_wait = 60.0  # Máximo de 60 segundos entre tentativas
         for attempt in range(self.config.max_reconnect_attempts):
-            await asyncio.sleep(self.config.reconnect_interval * (2 ** attempt))
+            wait_time = min(self.config.reconnect_interval * (2 ** attempt), max_wait)
+            await asyncio.sleep(wait_time)
 
             if await self.connect():
                 logger.info("Reconectado com sucesso")

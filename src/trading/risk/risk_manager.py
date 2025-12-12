@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class RiskViolation(Enum):
     """Tipos de violação de risco"""
     MAX_POSITION_SIZE = 'max_position_size'
+    MAX_OPEN_POSITIONS = 'max_open_positions'
     MAX_DAILY_LOSS = 'max_daily_loss'
     MAX_DRAWDOWN = 'max_drawdown'
     MAX_ORDERS_PER_SECOND = 'max_orders_per_second'
@@ -403,7 +404,7 @@ class RiskManager:
             if open_positions >= self.limits.max_open_positions:
                 return RiskCheck(
                     passed=False,
-                    violation=RiskViolation.MAX_POSITION_SIZE,
+                    violation=RiskViolation.MAX_OPEN_POSITIONS,
                     message=f"Posições abertas {open_positions} >= limite {self.limits.max_open_positions}"
                 )
 

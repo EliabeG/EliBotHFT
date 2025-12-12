@@ -143,6 +143,14 @@ class OrderBook:
         """Registra callback para atualizações"""
         self._callbacks.append(callback)
 
+    def unregister_callback(self, callback: Callable[[OrderBookUpdate], None]) -> bool:
+        """Remove callback registrado. Retorna True se removido."""
+        try:
+            self._callbacks.remove(callback)
+            return True
+        except ValueError:
+            return False
+
     def _emit_update(self, update: OrderBookUpdate) -> None:
         """Emite atualização para callbacks"""
         for cb in self._callbacks:
@@ -189,10 +197,19 @@ class OrderBook:
                      reverse: bool) -> None:
         """Atualiza um lado do book"""
         if size <= 0:
-            # Remover nível
+            # Remover nível - usar bisect para encontrar índice (O(log n))
             if price in levels:
                 del levels[price]
-                prices.remove(price)
+                if reverse:
+                    # Bids são ordenados do maior para menor
+                    # Encontrar índice com busca binária invertida
+                    idx = len(prices) - bisect.bisect_left(prices[::-1], price) - 1
+                    if 0 <= idx < len(prices) and prices[idx] == price:
+                        prices.pop(idx)
+                else:
+                    idx = bisect.bisect_left(prices, price)
+                    if idx < len(prices) and prices[idx] == price:
+                        prices.pop(idx)
         else:
             # Adicionar ou atualizar
             if price in levels:
@@ -202,8 +219,10 @@ class OrderBook:
                 levels[price] = OrderBookLevel(price=price, size=size)
                 # Inserir ordenado
                 if reverse:
-                    bisect.insort(prices, price)
-                    prices.reverse()  # Manter maior primeiro
+                    # Para bids: inserir mantendo ordem decrescente
+                    # Usar negativo para bisect manter ordem reversa
+                    idx = bisect.bisect_left([-p for p in prices], -price)
+                    prices.insert(idx, price)
                 else:
                     bisect.insort(prices, price)
 

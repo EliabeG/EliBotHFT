@@ -100,13 +100,16 @@ class ScalpingStrategy(BaseStrategy):
         prices = list(self._price_history)
 
         # Momentum (retorno recente)
-        if len(prices) >= 5:
+        if len(prices) >= 5 and prices[-5] != 0:
             self._momentum = (prices[-1] - prices[-5]) / prices[-5]
 
         # Volatilidade (desvio padrão dos retornos)
         if len(prices) >= 10:
-            returns = np.diff(prices) / prices[:-1]
-            self._volatility = np.std(returns) if len(returns) > 0 else 0
+            # Evitar divisão por zero
+            prices_arr = np.array(prices[:-1])
+            if np.all(prices_arr != 0):
+                returns = np.diff(prices) / prices_arr
+                self._volatility = np.std(returns) if len(returns) > 0 else 0
 
     def _check_entry_conditions(self, quote: Quote, book: OrderBook) -> Optional[Signal]:
         """Verifica condições de entrada"""
