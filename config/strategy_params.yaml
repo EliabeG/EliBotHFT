@@ -10,13 +10,13 @@ strategy:
 # Instrumentos ativos
 instruments:
   - symbol: "XAUUSD"
-    enabled: true
+    enabled: false  # Desativado
     priority: 1
   - symbol: "EURUSD"
     enabled: true
     priority: 2
   - symbol: "GBPUSD"
-    enabled: true
+    enabled: false  # Desativado
     priority: 3
 
 # Parâmetros de Market Making / Scalping
