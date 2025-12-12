@@ -111,6 +111,11 @@ class BreakoutStrategy(BaseStrategy):
         self._false_breakouts = 0
         self._successful_breakouts = 0
 
+        # Trailing stop tracking (FIX: adiciona estado persistente)
+        self._trailing_highs: Dict[str, float] = {}
+        self._trailing_lows: Dict[str, float] = {}
+        self._min_profit_to_trail_pips = self.config.get('min_profit_to_trail_pips', 1.0)
+
         logger.info(f"Breakout strategy initialized")
 
     def on_tick(self, state: MarketState) -> Optional[Signal]:
@@ -427,53 +432,82 @@ class BreakoutStrategy(BaseStrategy):
         return None
 
     def _check_exit_conditions(self, symbol: str, quote: Quote) -> Optional[Signal]:
-        """Verifica condições de saída"""
+        """Verifica condições de saída com trailing stop persistente"""
         position = self.get_position(symbol)
         if not position:
             return None
 
         current_price = quote.mid_price
+        min_profit_distance = self._min_profit_to_trail_pips * self.pip_size
 
-        # Calcular P&L em pips
+        # Calcular P&L
         if position.side == 'long':
-            pnl_pips = (current_price - position.entry_price) / self.pip_size
+            current_profit = current_price - position.entry_price
+            pnl_pips = current_profit / self.pip_size
         else:
-            pnl_pips = (position.entry_price - current_price) / self.pip_size
+            current_profit = position.entry_price - current_price
+            pnl_pips = current_profit / self.pip_size
 
-        # Stop Loss / Take Profit são gerenciados pelo broker
-        # Aqui fazemos trailing stop baseado em ATR
+        # Atualizar trailing high/low (FIX: estado persistente)
+        if position.side == 'long':
+            # Só começa a rastrear após lucro mínimo
+            if current_profit >= min_profit_distance:
+                current_high = self._trailing_highs.get(symbol, current_price)
+                if current_price > current_high:
+                    self._trailing_highs[symbol] = current_price
+                    logger.debug(f"[{symbol}] Trailing high atualizado: {current_price:.5f}")
+        else:
+            if current_profit >= min_profit_distance:
+                current_low = self._trailing_lows.get(symbol, current_price)
+                if current_price < current_low:
+                    self._trailing_lows[symbol] = current_price
+                    logger.debug(f"[{symbol}] Trailing low atualizado: {current_price:.5f}")
 
+        # Calcular trailing distance baseado em ATR
         atr_pips = self._atr.current / self.pip_size if self._atr.current > 0 else 10
-        trailing_distance = atr_pips * 1.0  # 1x ATR trailing
+        trailing_distance_pips = atr_pips * 1.0  # 1x ATR trailing
+        trailing_distance = trailing_distance_pips * self.pip_size
 
-        if pnl_pips > trailing_distance:
-            # Verificar se reverteu mais que o trailing
-            if position.side == 'long':
-                high_since_entry = max(list(self._close_history)[-20:]) if self._close_history else current_price
-                drawdown_pips = (high_since_entry - current_price) / self.pip_size
-
-                if drawdown_pips > trailing_distance:
+        # Verificar trailing stop (FIX: usa estado persistente)
+        if position.side == 'long':
+            trailing_high = self._trailing_highs.get(symbol)
+            if trailing_high is not None:
+                trailing_stop = trailing_high - trailing_distance
+                if current_price < trailing_stop and pnl_pips >= 0.5:
+                    logger.info(f"[{symbol}] ATR TRAILING STOP: high={trailing_high:.5f}, stop={trailing_stop:.5f}, pnl={pnl_pips:.1f} pips")
+                    self._trailing_highs.pop(symbol, None)
                     return self._emit_signal(Signal(
                         signal_type=SignalType.CLOSE_LONG,
                         symbol=symbol,
                         price=current_price,
                         strength=SignalStrength.STRONG,
                         confidence=0.9,
-                        metadata={'reason': 'atr_trailing_stop', 'pnl_pips': pnl_pips}
+                        metadata={
+                            'reason': 'atr_trailing_stop',
+                            'pnl_pips': pnl_pips,
+                            'trailing_high': trailing_high,
+                            'trailing_distance_pips': trailing_distance_pips
+                        }
                     ))
-
-            else:
-                low_since_entry = min(list(self._close_history)[-20:]) if self._close_history else current_price
-                drawdown_pips = (current_price - low_since_entry) / self.pip_size
-
-                if drawdown_pips > trailing_distance:
+        else:
+            trailing_low = self._trailing_lows.get(symbol)
+            if trailing_low is not None:
+                trailing_stop = trailing_low + trailing_distance
+                if current_price > trailing_stop and pnl_pips >= 0.5:
+                    logger.info(f"[{symbol}] ATR TRAILING STOP: low={trailing_low:.5f}, stop={trailing_stop:.5f}, pnl={pnl_pips:.1f} pips")
+                    self._trailing_lows.pop(symbol, None)
                     return self._emit_signal(Signal(
                         signal_type=SignalType.CLOSE_SHORT,
                         symbol=symbol,
                         price=current_price,
                         strength=SignalStrength.STRONG,
                         confidence=0.9,
-                        metadata={'reason': 'atr_trailing_stop', 'pnl_pips': pnl_pips}
+                        metadata={
+                            'reason': 'atr_trailing_stop',
+                            'pnl_pips': pnl_pips,
+                            'trailing_low': trailing_low,
+                            'trailing_distance_pips': trailing_distance_pips
+                        }
                     ))
 
         return None
