@@ -703,21 +703,33 @@ class IncrementalSGD:
         Incremental training step.
 
         Args:
-            X: Features (batch_size, input_size)
-            y: Labels (batch_size, output_size) one-hot
+            X: Features (batch_size, input_size) or (input_size,)
+            y: Labels (batch_size, output_size) or (output_size,)
 
         Returns:
             Loss value
         """
+        # Handle 1D input
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
+        if y.ndim == 1:
+            y = y.reshape(1, -1)
+
         batch_size = X.shape[0]
         self.n_samples_seen += batch_size
 
         # Forward pass
         logits = X @ self.weights + self.bias
-        proba = self._softmax(logits)
 
-        # Loss
-        loss = -np.mean(np.sum(y * np.log(proba + 1e-10), axis=1))
+        # Use sigmoid for binary (single output), softmax for multiclass
+        if self.output_size == 1:
+            proba = 1 / (1 + np.exp(-np.clip(logits, -500, 500)))
+            # Binary cross-entropy loss
+            loss = -np.mean(y * np.log(proba + 1e-10) + (1 - y) * np.log(1 - proba + 1e-10))
+        else:
+            proba = self._softmax(logits)
+            # Categorical cross-entropy loss
+            loss = -np.mean(np.sum(y * np.log(proba + 1e-10), axis=1))
 
         # Backward pass
         d_logits = (proba - y) / batch_size
@@ -732,7 +744,7 @@ class IncrementalSGD:
         self.weights += self.v_weights
         self.bias += self.v_bias
 
-        return loss
+        return float(loss)
 
     def fit(self, X: np.ndarray, y: np.ndarray, epochs: int = 10) -> float:
         """Full training"""

@@ -77,8 +77,15 @@ class SimpleNeuralNet:
         exp_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return exp_x / np.sum(exp_x, axis=-1, keepdims=True)
 
+    def _sigmoid(self, x: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+
     def fit(self, X: np.ndarray, y: np.ndarray, epochs: int = 100) -> float:
         """Train the network"""
+        # Handle 1D targets (binary classification)
+        y_train = y.reshape(-1, 1) if y.ndim == 1 else y
+        is_binary = y_train.shape[1] == 1
+
         for epoch in range(epochs):
             # Forward pass
             activations = [X]
@@ -87,15 +94,20 @@ class SimpleNeuralNet:
                 if i < len(self.weights) - 1:
                     a = self._relu(z)
                 else:
-                    a = self._softmax(z)
+                    # Use sigmoid for binary, softmax for multi-class
+                    a = self._sigmoid(z) if is_binary else self._softmax(z)
                 activations.append(a)
 
             # Compute loss
             pred = activations[-1]
-            loss = -np.mean(np.sum(y * np.log(pred + 1e-10), axis=1))
+            if is_binary:
+                # Binary cross-entropy
+                loss = -np.mean(y_train * np.log(pred + 1e-10) + (1 - y_train) * np.log(1 - pred + 1e-10))
+            else:
+                loss = -np.mean(np.sum(y_train * np.log(pred + 1e-10), axis=1))
 
             # Backward pass
-            d = pred - y
+            d = pred - y_train
             for i in reversed(range(len(self.weights))):
                 dW = activations[i].T @ d / X.shape[0]
                 db = np.mean(d, axis=0)
@@ -106,21 +118,28 @@ class SimpleNeuralNet:
                 if i > 0:
                     d = (d @ self.weights[i].T) * (activations[i] > 0)
 
-        return loss
+        return float(loss)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Make predictions"""
         a = X
+        is_binary = self.weights[-1].shape[1] == 1
         for i, (W, b) in enumerate(zip(self.weights, self.biases)):
             z = a @ W + b
             if i < len(self.weights) - 1:
                 a = self._relu(z)
             else:
-                a = self._softmax(z)
-        return a
+                a = self._sigmoid(z) if is_binary else self._softmax(z)
+        # Flatten for binary classification
+        return a.flatten() if is_binary else a
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        return self.predict(X)
+        """Return probability estimates for each class"""
+        pred = self.predict(X)
+        if pred.ndim == 1:
+            # Binary classification: return [1-p, p] for compatibility
+            return np.column_stack([1 - pred, pred])
+        return pred
 
     def predict_class(self, X: np.ndarray) -> np.ndarray:
         return np.argmax(self.predict(X), axis=1)
