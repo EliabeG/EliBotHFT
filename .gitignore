@@ -44,6 +44,7 @@ data/market_data/*.csv
 data/market_data/*.json
 data/models/
 data/ml/
+data/optimization_results/
 
 # Config with secrets
 .env

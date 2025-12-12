@@ -98,6 +98,30 @@ class Tick:
 
 
 @dataclass
+class Bar:
+    """Barra/Candle OHLC"""
+    symbol: str
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+
+    @property
+    def body_size(self) -> float:
+        return abs(self.close - self.open)
+
+    @property
+    def is_bullish(self) -> bool:
+        return self.close > self.open
+
+    @property
+    def range(self) -> float:
+        return self.high - self.low
+
+
+@dataclass
 class AccountInfo:
     """Informações da conta"""
     account_id: str
@@ -731,6 +755,155 @@ class FXOpenClient:
             return self._quotes.get(symbol)
 
         return None
+
+    async def get_bars_history(self, symbol: str, periodicity: str = 'M1',
+                               bars_type: str = 'Bid', count: int = 1000,
+                               start_time: datetime = None) -> List[Bar]:
+        """
+        Obtém histórico de barras/candles via REST API
+
+        Args:
+            symbol: Símbolo (ex: 'EURUSD')
+            periodicity: Período das barras ('S1', 'M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1', 'W1', 'MN1')
+            bars_type: Tipo de preço ('Bid', 'Ask')
+            count: Número de barras (máximo ~1000)
+            start_time: Data/hora inicial (None = últimas N barras)
+
+        Returns:
+            Lista de Bar ordenadas por timestamp
+        """
+        try:
+            # Construir URL REST API
+            # Documentação: https://ttlivewebapi.fxopen.net:8443/api/doc/index
+            base_url = f"https://{self.config.webapi_host}:8443/api/v2"
+
+            # Gerar assinatura HMAC
+            timestamp = int(time.time() * 1000)
+            signature = self._generate_signature(timestamp)
+
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': f'HMAC {self.config.token_id}:{self.config.token_key}:{timestamp}:{signature}'
+            }
+
+            # Parâmetros da requisição
+            params = {
+                'symbol': symbol,
+                'periodicity': periodicity,
+                'barsType': bars_type,
+                'count': min(count, 1000)
+            }
+
+            if start_time:
+                params['timestamp'] = int(start_time.timestamp() * 1000)
+
+            url = f"{base_url}/quotehistory/{symbol}/{periodicity}/bars/{bars_type}"
+
+            logger.info(f"Buscando histórico: {url} (count={count})")
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params={'count': count}, ssl=True) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        bars = []
+
+                        # Parse response - formato pode variar
+                        bars_data = data if isinstance(data, list) else data.get('Bars', data.get('bars', []))
+
+                        for bar_data in bars_data:
+                            try:
+                                bar = Bar(
+                                    symbol=symbol,
+                                    timestamp=datetime.fromtimestamp(bar_data.get('Timestamp', 0) / 1000),
+                                    open=float(bar_data.get('Open', 0)),
+                                    high=float(bar_data.get('High', 0)),
+                                    low=float(bar_data.get('Low', 0)),
+                                    close=float(bar_data.get('Close', 0)),
+                                    volume=float(bar_data.get('Volume', 0))
+                                )
+                                bars.append(bar)
+                            except Exception as e:
+                                logger.warning(f"Erro ao parsear bar: {e}")
+
+                        logger.info(f"Obtidas {len(bars)} barras para {symbol}")
+                        return sorted(bars, key=lambda b: b.timestamp)
+
+                    elif response.status == 401:
+                        logger.error("Erro de autenticação na API REST")
+                    else:
+                        text = await response.text()
+                        logger.error(f"Erro ao obter histórico: {response.status} - {text}")
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar histórico: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return []
+
+    async def get_tick_history(self, symbol: str, count: int = 1000,
+                               start_time: datetime = None) -> List[Tick]:
+        """
+        Obtém histórico de ticks via REST API
+
+        Args:
+            symbol: Símbolo (ex: 'EURUSD')
+            count: Número de ticks (máximo ~1000)
+            start_time: Data/hora inicial
+
+        Returns:
+            Lista de Tick ordenados por timestamp
+        """
+        try:
+            base_url = f"https://{self.config.webapi_host}:8443/api/v2"
+
+            timestamp = int(time.time() * 1000)
+            signature = self._generate_signature(timestamp)
+
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': f'HMAC {self.config.token_id}:{self.config.token_key}:{timestamp}:{signature}'
+            }
+
+            url = f"{base_url}/quotehistory/{symbol}/ticks"
+
+            logger.info(f"Buscando histórico de ticks: {url}")
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params={'count': min(count, 1000)}, ssl=True) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        ticks = []
+
+                        ticks_data = data if isinstance(data, list) else data.get('Ticks', data.get('ticks', []))
+
+                        for tick_data in ticks_data:
+                            try:
+                                tick = Tick(
+                                    symbol=symbol,
+                                    timestamp=datetime.fromtimestamp(tick_data.get('Timestamp', 0) / 1000),
+                                    bid=float(tick_data.get('Bid', tick_data.get('BestBid', {}).get('Price', 0))),
+                                    ask=float(tick_data.get('Ask', tick_data.get('BestAsk', {}).get('Price', 0))),
+                                    bid_volume=float(tick_data.get('BidVolume', 0)),
+                                    ask_volume=float(tick_data.get('AskVolume', 0))
+                                )
+                                ticks.append(tick)
+                            except Exception as e:
+                                logger.warning(f"Erro ao parsear tick: {e}")
+
+                        logger.info(f"Obtidos {len(ticks)} ticks para {symbol}")
+                        return sorted(ticks, key=lambda t: t.timestamp)
+
+                    else:
+                        text = await response.text()
+                        logger.error(f"Erro ao obter ticks: {response.status} - {text}")
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar ticks: {e}")
+
+        return []
 
     async def get_positions(self) -> List[TradePosition]:
         """Obtém posições/trades abertas"""
