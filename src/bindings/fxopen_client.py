@@ -402,12 +402,20 @@ class FXOpenClient:
 
     async def _feed_ws_receiver(self) -> None:
         """Loop de recepção de mensagens do Feed WebSocket"""
+        logger.info("Feed WS receiver iniciado")
+        tick_count = 0
         while self._feed_ws and not self._feed_ws.closed:
             try:
                 msg = await self._feed_ws.receive()
 
                 if msg.type == aiohttp.WSMsgType.TEXT:
                     data = json.loads(msg.data)
+                    # Log periódico de ticks
+                    if data.get('Response') == 'FeedTick':
+                        tick_count += 1
+                        if tick_count % 100 == 1:  # Log a cada 100 ticks
+                            symbol = data.get('Result', {}).get('Symbol', '?')
+                            logger.info(f"Feed recebendo ticks ({tick_count} total) - último: {symbol}")
                     await self._handle_feed_message(data)
 
                 elif msg.type == aiohttp.WSMsgType.CLOSED:
@@ -422,6 +430,7 @@ class FXOpenClient:
             except Exception as e:
                 logger.error(f"Erro no Feed WS receiver: {e}")
                 await asyncio.sleep(1)
+        logger.warning("Feed WS receiver encerrado")
 
     async def _handle_trade_message(self, data: dict) -> None:
         """Processa mensagem do Trade WebSocket"""
@@ -475,11 +484,17 @@ class FXOpenClient:
 
                 self._quotes[symbol] = tick
 
+                # Log tick recebido (debug)
+                logger.debug(f"Tick {symbol}: bid={tick.bid:.5f}, ask={tick.ask:.5f}")
+
                 for cb in self._on_tick:
                     try:
                         cb(tick)
                     except Exception as e:
                         logger.error(f"Erro no callback de tick: {e}")
+        else:
+            # Log outras mensagens do feed para debug
+            logger.debug(f"Feed message: {response_type}")
 
     def _update_account_from_result(self, result: dict) -> None:
         """Atualiza account info do resultado"""

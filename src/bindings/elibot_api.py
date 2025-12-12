@@ -305,6 +305,13 @@ class EliBotAPI:
         start = self._latency_logger.start_timer()
 
         try:
+            # Log periódico de ticks recebidos
+            if not hasattr(self, '_tick_count'):
+                self._tick_count = 0
+            self._tick_count += 1
+            if self._tick_count % 50 == 1:
+                logger.info(f"Processando tick #{self._tick_count}: {tick.symbol} bid={tick.bid:.5f} ask={tick.ask:.5f}")
+
             # Atualizar order book
             if tick.symbol in self._order_books:
                 book = self._order_books[tick.symbol]
