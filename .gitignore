@@ -37,12 +37,13 @@ env/
 
 # Logs
 *.log
-data/logs/*.log
+data/logs/
 
 # Data files
 data/market_data/*.csv
 data/market_data/*.json
 data/models/
+data/ml/
 
 # Config with secrets
 .env
