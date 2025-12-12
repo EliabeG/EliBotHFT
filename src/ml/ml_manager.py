@@ -14,6 +14,7 @@ The MLManager:
 
 import logging
 import asyncio
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from datetime import datetime, timedelta
