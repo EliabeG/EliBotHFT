@@ -9,15 +9,12 @@ strategy:
 
 # Instrumentos ativos
 instruments:
-  - symbol: "XAUUSD"
-    enabled: false  # Desativado
-    priority: 1
   - symbol: "EURUSD"
     enabled: true
-    priority: 2
+    priority: 1
   - symbol: "GBPUSD"
     enabled: false  # Desativado
-    priority: 3
+    priority: 2
 
 # Parâmetros de Market Making / Scalping
 market_making:
@@ -56,7 +53,6 @@ hft_params:
     EURUSD: 0.0001
     GBPUSD: 0.0001
     USDJPY: 0.01
-    XAUUSD: 0.01
     default: 0.0001
 
 # Mean Reversion

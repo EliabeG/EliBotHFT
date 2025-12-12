@@ -13,10 +13,6 @@
         "risk_per_trade_percent": 1.0
     },
     "position_limits": {
-        "XAUUSD": {
-            "max_lots": 0.5,
-            "max_positions": 2
-        },
         "EURUSD": {
             "max_lots": 1.0,
             "max_positions": 3

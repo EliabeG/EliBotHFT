@@ -320,7 +320,7 @@ def run_standalone():
             class MockBotAPI:
                 def __init__(self, client):
                     self._client = client
-                    self.config = type('obj', (object,), {'symbols': ['XAUUSD', 'EURUSD']})()
+                    self.config = type('obj', (object,), {'symbols': ['EURUSD', 'GBPUSD']})()
 
                 async def get_account(self):
                     return await self._client.get_account_info()
