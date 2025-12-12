@@ -599,14 +599,14 @@ class FXOpenClient:
 
         except Exception as e:
             logger.error(f"Erro ao carregar specs: {e}")
-            # Usar defaults
-            for symbol in ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY']:
+            # Usar defaults para pares de moedas
+            for symbol in ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD']:
                 self._symbol_specs[symbol] = {
-                    'contract_size': 100000 if 'USD' in symbol and 'XAU' not in symbol else 100,
+                    'contract_size': 100000,
                     'min_amount': 0.01,
                     'max_amount': 1000,
                     'step': 0.01,
-                    'precision': 5
+                    'precision': 5 if symbol != 'USDJPY' else 3
                 }
 
     def _lots_to_amount(self, symbol: str, lots: float) -> float:
@@ -614,11 +614,6 @@ class FXOpenClient:
         # Obter contract size do símbolo
         specs = self._symbol_specs.get(symbol, {})
         contract_size = specs.get('contract_size', 100000)
-
-        # Para XAUUSD e metais, geralmente é diferente
-        if 'XAU' in symbol or 'XAG' in symbol:
-            # Metais: 1 lote = 100 onças
-            contract_size = specs.get('contract_size', 100)
 
         amount = lots * contract_size
         logger.info(f"Convertendo {lots} lotes -> {amount} unidades ({symbol}, contract_size={contract_size})")

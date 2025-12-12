@@ -150,9 +150,9 @@ class ReplayEngine:
 
         # Parâmetros por símbolo
         params = {
-            'XAUUSD': {'base': 2000.0, 'vol': 0.0003, 'spread': 0.3},
             'EURUSD': {'base': 1.10, 'vol': 0.0001, 'spread': 0.00015},
             'GBPUSD': {'base': 1.27, 'vol': 0.0001, 'spread': 0.00018},
+            'USDJPY': {'base': 150.0, 'vol': 0.0001, 'spread': 0.015},
         }
 
         p = params.get(symbol, {'base': 100.0, 'vol': 0.0002, 'spread': 0.01})
@@ -511,8 +511,8 @@ def main():
     engine = ReplayEngine()
 
     # Carregar dados (ou gerar sintéticos)
-    engine.load_data('XAUUSD')
     engine.load_data('EURUSD')
+    engine.load_data('GBPUSD')
 
     # Contador de ticks
     tick_count = [0]
@@ -532,7 +532,7 @@ def main():
 
     # Executar replay síncrono
     print("\nIniciando replay...")
-    stats = engine.run_sync(['XAUUSD', 'EURUSD'])
+    stats = engine.run_sync(['EURUSD', 'GBPUSD'])
 
     # Resultados
     duration = stats.end_time - stats.start_time

@@ -51,7 +51,6 @@ class MomentumStrategy(BaseStrategy):
             'EURUSD': 0.0001,
             'GBPUSD': 0.0001,
             'USDJPY': 0.01,
-            'XAUUSD': 0.01,  # Gold usa 0.01
             'default': 0.0001
         })
 

@@ -141,11 +141,11 @@ class ParameterOptimizer:
         np.random.seed(42)
 
         # Parâmetros baseados no símbolo
-        if symbol == 'XAUUSD':
-            base_price = 2000.0
-            volatility = 0.0005
-        elif symbol == 'EURUSD':
+        if symbol == 'EURUSD':
             base_price = 1.10
+            volatility = 0.0002
+        elif symbol == 'GBPUSD':
+            base_price = 1.27
             volatility = 0.0002
         else:
             base_price = 1.0
@@ -495,7 +495,7 @@ def main():
 
     # Random search
     print("\nExecutando Random Search...")
-    result = optimizer.random_search('XAUUSD', n_iterations=50)
+    result = optimizer.random_search('EURUSD', n_iterations=50)
 
     if result:
         print(optimizer.report())

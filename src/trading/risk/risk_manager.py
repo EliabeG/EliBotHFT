@@ -153,7 +153,7 @@ class RiskManager:
         self._circuit_breaker_until = 0.0
 
         # Símbolos permitidos
-        self._allowed_symbols: set = {'XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'}
+        self._allowed_symbols: set = {'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD'}
 
         # Callbacks
         self._on_violation: List[Callable[[RiskViolation, str], None]] = []

@@ -46,7 +46,7 @@ class BotConfig:
 
     def __post_init__(self):
         if self.symbols is None:
-            self.symbols = ['XAUUSD', 'EURUSD']
+            self.symbols = ['EURUSD']
         if self.fxopen is None:
             self.fxopen = FXOpenConfig()
 
