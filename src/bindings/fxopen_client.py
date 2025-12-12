@@ -433,7 +433,7 @@ class FXOpenClient:
         logger.warning("Feed WS receiver encerrado")
 
     async def _handle_trade_message(self, data: dict) -> None:
-        """Processa mensagem do Trade WebSocket"""
+        """Processa mensagem do Trade WebSocket (conforme documentação FXOpen)"""
         response_type = data.get('Response', '')
         request_id = data.get('Id', '')
 
@@ -444,34 +444,92 @@ class FXOpenClient:
                 future.set_result(data)
             return
 
-        # Notificações
+        # Notificações (conforme documentação)
         if 'Notify' in data:
             notify_type = data.get('Notify', '')
+            result = data.get('Result', {})
 
-            if notify_type == 'PositionUpdate':
+            if notify_type == 'ExecutionReport':
+                # Execution Report - notificação de eventos de trade
+                # Status pode ser: Accepted, Filled, PartiallyFilled, Allocated, Modified, Canceled, etc.
+                execution_type = result.get('ExecutionType', '')
+                trade_id = result.get('Id', '')
+                status = result.get('Status', '')
+
+                logger.info(f"ExecutionReport: {execution_type} - Trade {trade_id} - Status {status}")
+
+                # Atualizar cache de posições se necessário
+                if execution_type in ('Fill', 'Trade', 'Allocated'):
+                    # Nova posição ou modificação
+                    await self._request_positions_update()
+
+                # Notificar callbacks
                 for cb in self._on_trade:
                     try:
-                        cb(data)
+                        cb({'type': 'execution', 'data': result})
                     except Exception as e:
-                        logger.error(f"Erro no callback de trade: {e}")
+                        logger.error(f"Erro no callback de execution: {e}")
+
+            elif notify_type == 'PositionUpdate':
+                # Atualização de posição
+                logger.debug(f"PositionUpdate: {result}")
+                for cb in self._on_trade:
+                    try:
+                        cb({'type': 'position', 'data': result})
+                    except Exception as e:
+                        logger.error(f"Erro no callback de position: {e}")
 
             elif notify_type == 'AccountUpdate':
-                result = data.get('Result', {})
+                # Atualização de conta
                 if result:
                     self._update_account_from_result(result)
+                    for cb in self._on_account:
+                        try:
+                            cb(self._account_info)
+                        except Exception as e:
+                            logger.error(f"Erro no callback de account: {e}")
+
+            elif notify_type == 'TradeSessionInfo':
+                # Informações da sessão de trading
+                logger.info(f"TradeSessionInfo: {result}")
+
+            elif notify_type == 'Balance':
+                # Atualização de saldo
+                if result:
+                    self._update_account_from_result(result)
+
+            else:
+                logger.debug(f"Notificação não tratada: {notify_type}")
+
+    async def _request_positions_update(self) -> None:
+        """Atualiza cache de posições"""
+        try:
+            await self.get_positions()
+        except Exception as e:
+            logger.error(f"Erro ao atualizar posições: {e}")
 
     async def _handle_feed_message(self, data: dict) -> None:
         """Processa mensagem do Feed WebSocket"""
         response_type = data.get('Response', '')
 
-        if response_type == 'FeedTick' or response_type == 'Tick':
-            # Tick update (subscription ou polling)
+        # FeedTick é o tipo correto para notificações de tick (conforme documentação)
+        if response_type == 'FeedTick':
+            # Tick update (subscription notification)
             result = data.get('Result', {})
             symbol = result.get('Symbol', '')
 
             if symbol:
+                # BestBid e BestAsk contêm Price e Volume (documentação oficial)
                 bid_best = result.get('BestBid', {})
                 ask_best = result.get('BestAsk', {})
+
+                # Também pode vir como arrays Bids/Asks com book depth
+                if not bid_best and 'Bids' in result:
+                    bids = result.get('Bids', [])
+                    bid_best = bids[0] if bids else {}
+                if not ask_best and 'Asks' in result:
+                    asks = result.get('Asks', [])
+                    ask_best = asks[0] if asks else {}
 
                 tick = Tick(
                     symbol=symbol,
@@ -492,13 +550,27 @@ class FXOpenClient:
                         cb(tick)
                     except Exception as e:
                         logger.error(f"Erro no callback de tick: {e}")
+
         elif response_type == 'FeedSubscribe':
             # Confirmação de inscrição
             result = data.get('Result', {})
-            logger.info(f"FeedSubscribe confirmado: {result}")
+            if 'Error' in data:
+                logger.error(f"FeedSubscribe error: {data.get('Error')}")
+            else:
+                logger.info(f"FeedSubscribe confirmado: {result}")
+
+        elif response_type == 'Symbols':
+            # Resposta de símbolos (tratada em _load_symbol_specs)
+            pass
+
+        elif response_type == 'Error':
+            # Erro genérico
+            logger.error(f"Feed error: {data.get('Error', 'Unknown')}")
+
         else:
-            # Log outras mensagens do feed
-            logger.info(f"Feed message não tratada: {response_type} - {data}")
+            # Log outras mensagens do feed para debug
+            if response_type:
+                logger.debug(f"Feed message: {response_type}")
 
     def _update_account_from_result(self, result: dict) -> None:
         """Atualiza account info do resultado"""
@@ -734,20 +806,24 @@ class FXOpenClient:
         return True
 
     async def unsubscribe_ticks(self, symbols: List[str]) -> bool:
-        """Remove inscrição de ticks"""
+        """Remove inscrição de ticks (conforme documentação FXOpen)"""
         if not self._feed_ws or self._feed_ws.closed:
             return False
 
-        for symbol in symbols:
-            request = {
-                "Id": str(uuid.uuid4()),
-                "Request": "FeedUnsubscribe",
-                "Params": {
-                    "Unsubscribe": [symbol]
-                }
+        # De acordo com a documentação, usamos FeedSubscribe com Unsubscribe
+        # ao invés de Subscribe para remover inscrições
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "FeedSubscribe",
+            "Params": {
+                "Unsubscribe": symbols  # Lista de símbolos para desinscrever
             }
-            await self._feed_ws.send_json(request)
+        }
+        await self._feed_ws.send_json(request)
+
+        for symbol in symbols:
             self._subscribed_symbols.discard(symbol)
+            logger.info(f"Desinscrito de ticks de {symbol}")
 
         return True
 
@@ -820,17 +896,34 @@ class FXOpenClient:
         return None
 
     async def close_position(self, position_id: str, volume: float = None) -> bool:
-        """Fecha posição"""
+        """
+        Fecha posição (conforme documentação FXOpen TradeDelete)
+
+        Args:
+            position_id: ID da posição/trade
+            volume: Volume para fechamento parcial (None = fechar tudo)
+        """
+        # De acordo com a documentação:
+        # Type: "Close" para fechar posições
+        # Id: ID do trade (pode ser string ou int dependendo da versão da API)
         params = {
             'Type': 'Close',
-            'Id': int(position_id)
+            'Id': position_id  # Manter como string - API aceita ambos
         }
-        if volume:
-            params['Amount'] = volume
+
+        # Para fechamento parcial, especificar Amount
+        if volume is not None:
+            # Converter lotes para unidades se necessário
+            position = self._positions.get(position_id)
+            if position:
+                amount = self._lots_to_amount(position.symbol, volume)
+                params['Amount'] = amount
+            else:
+                params['Amount'] = volume
 
         request = {
             "Id": str(uuid.uuid4()),
-            "Request": "TradeDelete",  # Correto: TradeDelete, não ClosePosition
+            "Request": "TradeDelete",
             "Params": params
         }
 
@@ -840,10 +933,118 @@ class FXOpenClient:
 
         logger.info(f"Resposta de fechamento: {json.dumps(response, indent=2) if response else 'None'}")
 
-        if response and 'Result' in response:
-            logger.info(f"Posição fechada: {position_id}")
-            self._positions.pop(position_id, None)
-            return True
+        if response:
+            # Verificar erro
+            if 'Error' in response:
+                logger.error(f"Erro ao fechar posição: {response.get('Error')}")
+                return False
+
+            if 'Result' in response:
+                logger.info(f"Posição fechada: {position_id}")
+                self._positions.pop(position_id, None)
+                return True
+
+        return False
+
+    async def modify_position(self, position_id: str, stop_loss: float = None,
+                              take_profit: float = None, comment: str = None) -> bool:
+        """
+        Modifica posição existente (conforme documentação FXOpen TradeModify)
+
+        Args:
+            position_id: ID da posição/trade
+            stop_loss: Novo stop loss (None = não alterar)
+            take_profit: Novo take profit (None = não alterar)
+            comment: Novo comentário (None = não alterar)
+
+        Returns:
+            True se modificado com sucesso
+        """
+        # Obter posição atual para saber o símbolo e precisão
+        position = self._positions.get(position_id)
+        if not position:
+            logger.warning(f"Posição {position_id} não encontrada no cache")
+
+        params = {
+            'Id': position_id
+        }
+
+        # Obter precisão do símbolo
+        symbol = position.symbol if position else 'EURUSD'
+        specs = self._symbol_specs.get(symbol, {})
+        precision = specs.get('precision', 5)
+
+        # Adicionar apenas os campos que devem ser modificados
+        if stop_loss is not None:
+            params['StopLoss'] = round(stop_loss, precision)
+        if take_profit is not None:
+            params['TakeProfit'] = round(take_profit, precision)
+        if comment is not None:
+            params['Comment'] = comment
+
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "TradeModify",
+            "Params": params
+        }
+
+        logger.info(f"Modificando posição: {json.dumps(request, indent=2)}")
+
+        response = await self._send_trade_request(request)
+
+        logger.info(f"Resposta de modificação: {json.dumps(response, indent=2) if response else 'None'}")
+
+        if response:
+            # Verificar erro
+            if 'Error' in response:
+                logger.error(f"Erro ao modificar posição: {response.get('Error')}")
+                return False
+
+            if 'Result' in response:
+                logger.info(f"Posição modificada: {position_id}")
+                # Atualizar cache
+                if position:
+                    if stop_loss is not None:
+                        position.stop_loss = stop_loss
+                    if take_profit is not None:
+                        position.take_profit = take_profit
+                return True
+
+        return False
+
+    async def cancel_order(self, order_id: str) -> bool:
+        """
+        Cancela ordem pendente (conforme documentação FXOpen TradeDelete)
+
+        Args:
+            order_id: ID da ordem pendente
+
+        Returns:
+            True se cancelado com sucesso
+        """
+        params = {
+            'Type': 'Cancel',
+            'Id': order_id
+        }
+
+        request = {
+            "Id": str(uuid.uuid4()),
+            "Request": "TradeDelete",
+            "Params": params
+        }
+
+        logger.info(f"Cancelando ordem: {json.dumps(request, indent=2)}")
+
+        response = await self._send_trade_request(request)
+
+        if response:
+            if 'Error' in response:
+                logger.error(f"Erro ao cancelar ordem: {response.get('Error')}")
+                return False
+
+            if 'Result' in response:
+                logger.info(f"Ordem cancelada: {order_id}")
+                return True
 
         return False
 
@@ -854,6 +1055,10 @@ class FXOpenClient:
     def register_trade_callback(self, callback: Callable[[dict], None]) -> None:
         """Registra callback para trades"""
         self._on_trade.append(callback)
+
+    def register_account_callback(self, callback: Callable[[AccountInfo], None]) -> None:
+        """Registra callback para atualizações de conta"""
+        self._on_account.append(callback)
 
     @property
     def is_connected(self) -> bool:
