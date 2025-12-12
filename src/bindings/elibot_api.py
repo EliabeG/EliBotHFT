@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.network import WebSocketClient
 from core.fix_engine import FIXEngine, SessionConfig
 from core.logger import AsyncLogger, LatencyLogger
-from trading.book import OrderBook
+from trading.book import OrderBook, BookSide
 from trading.strategy import StrategyEngine, Signal, SignalType
 from trading.oms import OrderManagementSystem, Order, OrderStatus, Side, OrderType
 from trading.risk import RiskManager, RiskLimits
@@ -315,8 +315,8 @@ class EliBotAPI:
             # Atualizar order book
             if tick.symbol in self._order_books:
                 book = self._order_books[tick.symbol]
-                book.update(0, tick.bid, tick.bid_volume)  # BID
-                book.update(1, tick.ask, tick.ask_volume)  # ASK
+                book.update(BookSide.BID, tick.bid, tick.bid_volume)
+                book.update(BookSide.ASK, tick.ask, tick.ask_volume)
 
             # Processar estratégias
             if self._strategy_engine and self.config.enabled:
