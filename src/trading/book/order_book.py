@@ -6,7 +6,7 @@ Otimizado para HFT com estruturas de dados eficientes
 from typing import Dict, List, Optional, Tuple, Callable
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
-from collections import OrderedDict
+from collections import OrderedDict, deque
 import time
 import bisect
 import threading
@@ -139,6 +139,10 @@ class OrderBook:
         self._update_count = 0
         self._snapshot_count = 0
 
+        # Histórico de preços para análise ML
+        self._price_history_maxlen = 200
+        self.price_history: deque = deque(maxlen=self._price_history_maxlen)
+
     def register_callback(self, callback: Callable[[OrderBookUpdate], None]) -> None:
         """Registra callback para atualizações"""
         self._callbacks.append(callback)
@@ -179,6 +183,13 @@ class OrderBook:
                 self._update_side(self._bids, self._bid_prices, price, size, reverse=True)
             else:
                 self._update_side(self._asks, self._ask_prices, price, size, reverse=False)
+
+        # Registrar mid price no histórico para ML
+        mid = self.mid_price
+        if mid is not None:
+            # Só adicionar se mudou significativamente (evitar duplicatas)
+            if not self.price_history or abs(mid - self.price_history[-1]) > self.tick_size:
+                self.price_history.append(mid)
 
         # Emitir update
         update = OrderBookUpdate(
