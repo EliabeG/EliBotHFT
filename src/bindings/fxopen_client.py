@@ -337,11 +337,12 @@ class FXOpenClient:
 
                     logger.info("Login Feed bem-sucedido!")
 
-                    # Iniciar receiver
-                    asyncio.create_task(self._feed_ws_receiver())
-
-                    # Buscar especificações dos símbolos
+                    # Buscar especificações dos símbolos ANTES de iniciar o receiver
                     await self._load_symbol_specs()
+
+                    # Só depois iniciar o receiver para evitar "Concurrent call to receive()"
+                    self._feed_connected = True
+                    asyncio.create_task(self._feed_ws_receiver())
 
                     return True
 
