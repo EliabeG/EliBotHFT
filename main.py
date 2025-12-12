@@ -173,8 +173,8 @@ async def run_headless(bot: EliBotAPI):
     finally:
         logger.info("Encerrando bot...")
         await bot.stop()
-        # Aguardar limpeza de conexões pendentes
-        await asyncio.sleep(0.5)
+        # Aguardar limpeza completa de conexões SSL
+        await asyncio.sleep(1.0)
 
 
 def main():

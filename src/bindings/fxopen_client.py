@@ -361,19 +361,35 @@ class FXOpenClient:
         self._feed_connected = False
         self._trade_connected = False
 
-        if self._feed_ws and not self._feed_ws.closed:
-            await self._feed_ws.close()
+        # Fechar WebSockets primeiro
+        try:
+            if self._feed_ws and not self._feed_ws.closed:
+                await self._feed_ws.close()
+        except Exception as e:
+            logger.debug(f"Erro ao fechar Feed WS: {e}")
+        finally:
             self._feed_ws = None
 
-        if self._trade_ws and not self._trade_ws.closed:
-            await self._trade_ws.close()
+        try:
+            if self._trade_ws and not self._trade_ws.closed:
+                await self._trade_ws.close()
+        except Exception as e:
+            logger.debug(f"Erro ao fechar Trade WS: {e}")
+        finally:
             self._trade_ws = None
 
+        # Fechar sessão HTTP
         if self._session:
-            await self._session.close()
-            # Aguardar limpeza das conexões SSL
-            await asyncio.sleep(0.25)
-            self._session = None
+            try:
+                await self._session.close()
+            except Exception as e:
+                logger.debug(f"Erro ao fechar sessão: {e}")
+            finally:
+                self._session = None
+
+        # Aguardar limpeza completa das conexões SSL
+        # Isso evita o erro "Event loop is closed"
+        await asyncio.sleep(0.5)
 
         logger.info("Desconectado da FXOpen")
 
