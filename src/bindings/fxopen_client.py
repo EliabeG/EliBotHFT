@@ -28,46 +28,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FXOpenConfig:
-    """Configuração de conexão FXOpen
-
-    IMPORTANTE: As credenciais devem ser configuradas via variáveis de ambiente
-    ou arquivo de configuração. Nunca hardcode credenciais no código.
-
-    Variáveis de ambiente suportadas:
-        FXOPEN_LOGIN, FXOPEN_PASSWORD, FXOPEN_SERVER,
-        FXOPEN_TOKEN_ID, FXOPEN_TOKEN_KEY, FXOPEN_TOKEN_SECRET
-    """
-    # Credenciais - devem ser configuradas externamente
-    login: str = ''
-    password: str = ''
+    """Configuração de conexão FXOpen"""
+    # Credenciais
+    login: str = '28503781'
+    password: str = 'rngGNGMW'
     server: str = 'ttdemomarginal.fxopen.net'
 
-    # Web API - devem ser configuradas externamente
-    token_id: str = ''
-    token_key: str = ''
-    token_secret: str = ''
+    # Web API
+    token_id: str = '0473113a-f96d-4576-bd1b-507e71ec3d4f'
+    token_key: str = 'EGqeZPpJQSW2BjCb'
+    token_secret: str = 'YdafQEND2Fnrc5JGryX6ZPCJ5pf9rmyHnAk6wTDjWGddcRjWtxw369YhKzkBzPkM'
     auth_type: str = 'HMAC'
-
-    def __post_init__(self):
-        """Carrega credenciais de variáveis de ambiente se não fornecidas"""
-        import os
-        if not self.login:
-            self.login = os.environ.get('FXOPEN_LOGIN', '')
-        if not self.password:
-            self.password = os.environ.get('FXOPEN_PASSWORD', '')
-        if not self.server:
-            self.server = os.environ.get('FXOPEN_SERVER', 'ttdemomarginal.fxopen.net')
-        if not self.token_id:
-            self.token_id = os.environ.get('FXOPEN_TOKEN_ID', '')
-        if not self.token_key:
-            self.token_key = os.environ.get('FXOPEN_TOKEN_KEY', '')
-        if not self.token_secret:
-            self.token_secret = os.environ.get('FXOPEN_TOKEN_SECRET', '')
-
-    def validate(self) -> bool:
-        """Valida se as credenciais obrigatórias foram configuradas"""
-        required = [self.token_id, self.token_key, self.token_secret]
-        return all(required)
 
     # Conta
     account_type: str = 'Gross'

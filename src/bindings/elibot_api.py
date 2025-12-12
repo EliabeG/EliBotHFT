@@ -266,13 +266,14 @@ class EliBotAPI:
 
         # ML Manager
         ml_config = MLConfig(
-            data_dir=os.path.join(self.config.data_dir, 'ml'),
-            auto_train=True,
-            train_interval=100,  # Treinar a cada 100 trades
-            min_samples_for_training=50,
+            model_store_path=os.path.join(self.config.data_dir, 'ml', 'models'),
+            state_file=os.path.join(self.config.data_dir, 'ml', 'ml_state.json'),
+            training_interval=100,  # Treinar a cada 100 trades
+            min_samples_to_train=50,
             enable_error_learning=True,
-            enable_pattern_detection=True,
-            enable_adaptive_optimization=True
+            enable_pattern_analysis=True,
+            enable_adaptive_optimization=True,
+            enable_auto_training=True
         )
         self._ml_manager = MLManager(
             config=ml_config,
