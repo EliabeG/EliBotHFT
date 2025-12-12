@@ -14,6 +14,7 @@ The MLManager:
 
 import logging
 import asyncio
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from datetime import datetime, timedelta
@@ -613,8 +614,6 @@ class MLManager:
         market_regime: str
     ) -> np.ndarray:
         """Get feature vector for a trade (simplified version)"""
-        import numpy as np
-
         # Use current market features
         bid = entry_price * 0.9999
         ask = entry_price * 1.0001
