@@ -30,10 +30,10 @@ class MomentumStrategy(BaseStrategy):
         self.medium_window = self.config.get('medium_window', 30)
         self.long_window = self.config.get('long_window', 100)
 
-        # Thresholds
-        self.entry_threshold = self.config.get('entry_threshold', 0.0003)
-        self.exit_threshold = self.config.get('exit_threshold', 0.0001)
-        self.confirmation_ratio = self.config.get('confirmation_ratio', 0.7)
+        # Thresholds - valores menores para EURUSD (menos volátil)
+        self.entry_threshold = self.config.get('entry_threshold', 0.0001)  # 0.01% - mais sensível
+        self.exit_threshold = self.config.get('exit_threshold', 0.00005)  # 0.005%
+        self.confirmation_ratio = self.config.get('confirmation_ratio', 0.5)  # 50% confirmação
 
         # Stop/Take em PIPS (mais preciso para HFT)
         # Para EURUSD: 1 pip = 0.0001, 20 pontos = 2 pips
