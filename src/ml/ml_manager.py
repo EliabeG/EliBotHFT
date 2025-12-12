@@ -14,6 +14,7 @@ The MLManager:
 
 import logging
 import asyncio
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from datetime import datetime, timedelta
@@ -613,8 +614,6 @@ class MLManager:
         market_regime: str
     ) -> np.ndarray:
         """Get feature vector for a trade (simplified version)"""
-        import numpy as np
-
         # Use current market features
         bid = entry_price * 0.9999
         ask = entry_price * 1.0001
@@ -815,3 +814,187 @@ class MLManager:
         self.optimizer.reset()
 
         logger.info("MLManager reset complete")
+
+    # ==================== Convenience Methods ====================
+
+    def register_weight_callback(self, callback: Callable[[Dict[str, float]], None]) -> None:
+        """Register callback for strategy weight updates"""
+        self.on_weight_update = callback
+        self.optimizer.on_weight_update = callback
+        logger.debug("Weight update callback registered")
+
+    def learn_from_trade(
+        self,
+        trade_id: str,
+        symbol: str,
+        strategy_name: str,
+        signal_type: str,
+        entry_price: float,
+        exit_price: float,
+        pnl: float,
+        holding_time_ms: int,
+        market_regime: str,
+        signal_confidence: float = 0.7,
+        features: Optional[Dict[str, float]] = None,
+        price_history: Optional[List[float]] = None
+    ) -> Optional[TradeError]:
+        """
+        Simplified interface to learn from a completed trade.
+
+        This is a convenience wrapper around record_trade_result().
+
+        Args:
+            trade_id: Trade identifier
+            symbol: Trading symbol
+            strategy_name: Strategy name
+            signal_type: BUY or SELL
+            entry_price: Entry price
+            exit_price: Exit price
+            pnl: Profit/loss
+            holding_time_ms: Holding time in milliseconds
+            market_regime: Market regime
+            signal_confidence: Signal confidence (0-1)
+            features: Optional market features dict
+            price_history: Optional price history list
+
+        Returns:
+            TradeError if error was classified, None otherwise
+        """
+        # Calculate derived values
+        pip_size = 0.0001 if 'JPY' not in symbol else 0.01
+        spread_pips = features.get('spread_pips', 1.0) if features else 1.0
+        volatility = features.get('volatility', 0.01) if features else 0.01
+
+        # Update price history if provided
+        if price_history:
+            for price in price_history:
+                self.feature_extractor.update_price(price)
+
+        # Calculate stop/target from entry (rough estimate)
+        is_long = signal_type in ['BUY', 'CLOSE_SHORT']
+        if is_long:
+            planned_stop = entry_price - (20 * pip_size)
+            planned_target = entry_price + (30 * pip_size)
+        else:
+            planned_stop = entry_price + (20 * pip_size)
+            planned_target = entry_price - (30 * pip_size)
+
+        return self.record_trade_result(
+            trade_id=trade_id,
+            strategy_name=strategy_name,
+            signal_type=signal_type,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            expected_entry_price=entry_price,  # Assume no slippage info
+            planned_stop=planned_stop,
+            planned_target=planned_target,
+            signal_confidence=signal_confidence,
+            signal_strength='medium',
+            pnl=pnl,
+            holding_time_ms=holding_time_ms,
+            market_regime=market_regime,
+            volatility=volatility,
+            spread_pips=spread_pips,
+            symbol=symbol
+        )
+
+    def predict_trade_risk(
+        self,
+        symbol: str,
+        strategy_name: str,
+        signal_type: str,
+        features: Optional[Dict[str, float]] = None
+    ) -> Dict[str, Any]:
+        """
+        Predict risk for a potential trade.
+
+        This is a simplified interface for quick risk assessment.
+
+        Args:
+            symbol: Trading symbol
+            strategy_name: Strategy name
+            signal_type: BUY or SELL
+            features: Optional market features
+
+        Returns:
+            Dict with risk_score (0-1), recommendations, and predicted_errors
+        """
+        try:
+            # Extract features if not provided
+            if features is None:
+                features = {}
+
+            spread_pips = features.get('spread_pips', 1.0)
+            volatility = features.get('volatility', 0.01)
+            signal_confidence = features.get('signal_confidence', 0.7)
+
+            # Get feature vector
+            bid = features.get('bid', 1.0)
+            ask = features.get('ask', bid * 1.0001)
+
+            market_features = self.feature_extractor.extract_market_features(bid, ask, symbol)
+            feature_vector = market_features.to_vector()
+
+            # Predict error risk
+            error_risk = 0.3  # Default low risk
+            predicted_errors = []
+
+            if self.config.enable_error_learning:
+                error_risk = self.learning_engine.predict_error_risk(feature_vector)
+                predicted_errors = self.learning_engine.predict_error_type(feature_vector)
+
+            # Pattern matching
+            pattern_matches = []
+            if self.config.enable_pattern_analysis:
+                features_dict = market_features.to_dict()
+                features_dict.update(features)
+                market_regime = features.get('market_regime', 'UNKNOWN')
+                pattern_matches = self.pattern_analyzer.analyze_current_conditions(
+                    features_dict, strategy_name, market_regime
+                )
+
+            # Aggregate pattern risks
+            pattern_risk = 0.0
+            recommendations = []
+            if pattern_matches:
+                pattern_risk = max(m.overall_risk for m in pattern_matches)
+                for match in pattern_matches[:2]:
+                    recommendations.extend(match.recommendations[:2])
+
+            # Combined risk score
+            risk_score = max(error_risk, pattern_risk)
+
+            # Adjust based on strategy performance
+            if self.config.enable_adaptive_optimization:
+                perf = self.optimizer.performance.get(strategy_name)
+                if perf and perf.error_rate > 0.3:
+                    risk_score = min(1.0, risk_score + 0.2)
+
+            # Generate recommendation
+            recommendation = None
+            if risk_score > 0.9:
+                recommendation = "AVOID_TRADE"
+            elif risk_score > 0.7:
+                recommendation = "REDUCE_SIZE"
+            elif risk_score > 0.5:
+                recommendation = "PROCEED_WITH_CAUTION"
+            else:
+                recommendation = "PROCEED"
+
+            return {
+                'risk_score': risk_score,
+                'recommendation': recommendation,
+                'predicted_errors': [(e.name, p) for e, p in predicted_errors[:3]],
+                'pattern_matches': len(pattern_matches),
+                'recommendations': list(set(recommendations))[:5]
+            }
+
+        except Exception as e:
+            logger.error(f"Error predicting trade risk: {e}")
+            return {
+                'risk_score': 0.5,
+                'recommendation': 'PROCEED_WITH_CAUTION',
+                'predicted_errors': [],
+                'pattern_matches': 0,
+                'recommendations': []
+            }

@@ -26,6 +26,9 @@ from trading.oms import OrderManagementSystem, Order, OrderStatus, Side, OrderTy
 from trading.risk import RiskManager, RiskLimits
 from .fxopen_client import FXOpenClient, FXOpenConfig, OrderSide
 
+# ML System imports
+from ml import MLManager, MLConfig, ErrorType
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +95,12 @@ class EliBotAPI:
         self._oms: Optional[OrderManagementSystem] = None
         self._risk_manager: Optional[RiskManager] = None
         self._order_books: Dict[str, OrderBook] = {}
+        self._ml_manager: Optional[MLManager] = None
+
+        # Trade tracking for ML
+        self._active_trades: Dict[str, dict] = {}  # position_id -> trade_info
+        self._ml_save_interval = 300  # Salvar estado ML a cada 5 minutos
+        self._last_ml_save = 0.0
 
         # Logging
         self._logger = AsyncLogger(
@@ -205,6 +214,17 @@ class EliBotAPI:
             if self.config.mode == 'live':
                 await self._close_all_positions()
 
+            # Salvar estado ML antes de fechar
+            if self._ml_manager:
+                try:
+                    ml_dir = os.path.join(self.config.data_dir, 'ml')
+                    os.makedirs(ml_dir, exist_ok=True)
+                    ml_state_path = os.path.join(ml_dir, 'ml_state.json')
+                    self._ml_manager.save_state(ml_state_path)
+                    logger.info(f"Estado ML salvo em {ml_state_path}")
+                except Exception as e:
+                    logger.error(f"Erro ao salvar estado ML: {e}")
+
             # Desconectar
             if self._fxopen:
                 await self._fxopen.disconnect()
@@ -244,7 +264,38 @@ class EliBotAPI:
         for symbol in self.config.symbols:
             self._order_books[symbol] = OrderBook(symbol)
 
-        logger.info("Componentes inicializados")
+        # ML Manager
+        ml_config = MLConfig(
+            model_store_path=os.path.join(self.config.data_dir, 'ml', 'models'),
+            state_file=os.path.join(self.config.data_dir, 'ml', 'ml_state.json'),
+            training_interval=100,  # Treinar a cada 100 trades
+            min_samples_to_train=50,
+            enable_error_learning=True,
+            enable_pattern_analysis=True,
+            enable_adaptive_optimization=True,
+            enable_auto_training=True
+        )
+        self._ml_manager = MLManager(
+            config=ml_config,
+            strategy_names=self._strategy_engine.get_strategy_names() if self._strategy_engine else []
+        )
+
+        # Carregar estado ML anterior se existir
+        ml_state_path = os.path.join(self.config.data_dir, 'ml', 'ml_state.json')
+        if os.path.exists(ml_state_path):
+            try:
+                self._ml_manager.load_state(ml_state_path)
+                logger.info("Estado ML carregado com sucesso")
+            except Exception as e:
+                logger.warning(f"Falha ao carregar estado ML: {e}")
+
+        # Conectar ML ao strategy engine para ajuste de pesos
+        if self._strategy_engine and self._ml_manager:
+            self._ml_manager.register_weight_callback(
+                self._strategy_engine.update_strategy_weights
+            )
+
+        logger.info("Componentes inicializados (incluindo ML)")
 
     async def _connect(self) -> bool:
         """Conecta à FXOpen"""
@@ -289,6 +340,9 @@ class EliBotAPI:
                 if account:
                     self._risk_manager.update_account(account.balance, account.free_margin)
 
+                # Auto-save do estado ML periodicamente
+                await self._auto_save_ml_state()
+
                 # Pequeno delay para não sobrecarregar API
                 await asyncio.sleep(0.1)
 
@@ -299,6 +353,25 @@ class EliBotAPI:
                 await asyncio.sleep(1)
 
         logger.info("Loop principal encerrado")
+
+    async def _auto_save_ml_state(self) -> None:
+        """Salva estado ML periodicamente"""
+        try:
+            current_time = time.time()
+
+            # Salvar a cada intervalo definido
+            if current_time - self._last_ml_save >= self._ml_save_interval:
+                if self._ml_manager:
+                    ml_dir = os.path.join(self.config.data_dir, 'ml')
+                    os.makedirs(ml_dir, exist_ok=True)
+
+                    ml_state_path = os.path.join(ml_dir, 'ml_state.json')
+                    self._ml_manager.save_state(ml_state_path)
+                    self._last_ml_save = current_time
+                    logger.debug(f"Estado ML salvo em {ml_state_path}")
+
+        except Exception as e:
+            logger.error(f"Erro ao salvar estado ML: {e}")
 
     def _on_tick(self, tick) -> None:
         """Callback para ticks"""
@@ -361,7 +434,54 @@ class EliBotAPI:
         """Executa sinal de trading"""
         logger.info(f"Iniciando execução de sinal: {signal.signal_type.value} {signal.symbol}")
 
-        # Verificar risco
+        # ML: Verificar risco de erro baseado em padrões
+        ml_risk = 0.0
+        ml_recommendation = None
+        if self._ml_manager:
+            try:
+                # Obter features atuais do mercado
+                book = self._order_books.get(signal.symbol)
+                market_features = {}
+                if book:
+                    quote = book.get_quote()
+                    market_features = {
+                        'spread_pips': quote.spread_bps / 10 if hasattr(quote, 'spread_bps') else 0,
+                        'volatility': getattr(signal, 'volatility', 0.01),
+                        'signal_confidence': signal.confidence if hasattr(signal, 'confidence') else 0.7,
+                    }
+
+                # Obter predição de risco do ML
+                ml_prediction = self._ml_manager.predict_trade_risk(
+                    symbol=signal.symbol,
+                    strategy_name=signal.strategy_name,
+                    signal_type=signal.signal_type.value,
+                    features=market_features
+                )
+
+                if ml_prediction:
+                    ml_risk = ml_prediction.get('risk_score', 0.0)
+                    ml_recommendation = ml_prediction.get('recommendation', None)
+
+                    logger.info(f"ML Risk Score: {ml_risk:.2f}")
+
+                    # Se risco ML > 70%, reduzir tamanho da posição
+                    if ml_risk > 0.7:
+                        original_size = signal.size or 0.01
+                        signal.size = original_size * 0.5
+                        logger.warning(
+                            f"ML: Alto risco detectado ({ml_risk:.2f}). "
+                            f"Tamanho reduzido: {original_size} -> {signal.size}"
+                        )
+
+                    # Se risco ML > 90%, rejeitar sinal
+                    if ml_risk > 0.9:
+                        logger.warning(f"ML: Sinal rejeitado devido a risco muito alto ({ml_risk:.2f})")
+                        return
+
+            except Exception as e:
+                logger.error(f"Erro ao obter predição ML: {e}")
+
+        # Verificar risco tradicional
         order = Order(
             symbol=signal.symbol,
             side=Side.BUY if signal.signal_type == SignalType.BUY else Side.SELL,
@@ -421,11 +541,124 @@ class EliBotAPI:
 
     def _on_trade_update(self, data: dict) -> None:
         """Callback para atualizações de trade"""
+        # Processar para ML learning
+        self._process_trade_for_ml(data)
+
+        # Callbacks externos
         for cb in self._on_trade:
             try:
                 cb(data)
             except Exception as e:
                 logger.error(f"Erro no callback de trade: {e}")
+
+    def _process_trade_for_ml(self, data: dict) -> None:
+        """Processa trade para aprendizado ML"""
+        try:
+            if not self._ml_manager:
+                return
+
+            position_id = data.get('PositionId') or data.get('position_id')
+            if not position_id:
+                return
+
+            # Verificar tipo de evento
+            event_type = data.get('Type') or data.get('type', '')
+
+            # Trade aberto - registrar para tracking
+            if event_type in ['Opened', 'opened', 'Position']:
+                symbol = data.get('Symbol') or data.get('symbol', '')
+                side = data.get('Side') or data.get('side', '')
+                open_price = data.get('OpenPrice') or data.get('open_price', 0)
+                volume = data.get('Volume') or data.get('volume', 0)
+                strategy_name = data.get('Comment') or data.get('strategy', 'unknown')
+
+                # Obter features de mercado atuais
+                book = self._order_books.get(symbol)
+                market_features = {}
+                if book:
+                    quote = book.get_quote()
+                    market_features = {
+                        'spread_pips': quote.spread_bps / 10 if hasattr(quote, 'spread_bps') else 0,
+                        'bid': quote.bid_price,
+                        'ask': quote.ask_price,
+                    }
+
+                self._active_trades[str(position_id)] = {
+                    'position_id': position_id,
+                    'symbol': symbol,
+                    'side': side,
+                    'entry_price': open_price,
+                    'volume': volume,
+                    'strategy_name': strategy_name,
+                    'open_time': time.time(),
+                    'market_features': market_features,
+                    'signal_confidence': data.get('signal_confidence', 0.7)
+                }
+                logger.debug(f"Trade registrado para ML: {position_id}")
+
+            # Trade fechado - alimentar ML
+            elif event_type in ['Closed', 'closed', 'PositionClosed']:
+                trade_info = self._active_trades.pop(str(position_id), None)
+
+                if trade_info:
+                    close_price = data.get('ClosePrice') or data.get('close_price', 0)
+                    profit = data.get('Profit') or data.get('profit', 0)
+                    close_time = time.time()
+
+                    # Calcular métricas
+                    holding_time_ms = int((close_time - trade_info['open_time']) * 1000)
+                    entry_price = trade_info['entry_price']
+                    pip_size = 0.0001 if 'JPY' not in trade_info['symbol'] else 0.01
+                    slippage_pips = abs(close_price - entry_price) / pip_size if entry_price else 0
+
+                    # Obter histórico de preços recente
+                    price_history = self._get_recent_prices(trade_info['symbol'])
+
+                    # Determinar regime de mercado
+                    market_regime = self._strategy_engine.get_market_regime(
+                        trade_info['symbol']
+                    ) if self._strategy_engine else 'UNKNOWN'
+
+                    # Alimentar o ML Manager
+                    self._ml_manager.learn_from_trade(
+                        trade_id=str(position_id),
+                        symbol=trade_info['symbol'],
+                        strategy_name=trade_info['strategy_name'],
+                        signal_type='BUY' if trade_info['side'] in ['Buy', 'buy'] else 'SELL',
+                        entry_price=entry_price,
+                        exit_price=close_price,
+                        pnl=profit,
+                        holding_time_ms=holding_time_ms,
+                        market_regime=market_regime,
+                        signal_confidence=trade_info.get('signal_confidence', 0.7),
+                        features=trade_info.get('market_features', {}),
+                        price_history=price_history
+                    )
+
+                    logger.info(
+                        f"Trade {position_id} processado pelo ML: "
+                        f"PnL={profit:.2f}, regime={market_regime}"
+                    )
+
+        except Exception as e:
+            logger.error(f"Erro ao processar trade para ML: {e}")
+
+    def _get_recent_prices(self, symbol: str, lookback: int = 50) -> List[float]:
+        """Obtém histórico recente de preços"""
+        try:
+            book = self._order_books.get(symbol)
+            if book and hasattr(book, 'price_history'):
+                return list(book.price_history)[-lookback:]
+
+            # Fallback: usar mid price atual
+            if book:
+                quote = book.get_quote()
+                mid = (quote.bid_price + quote.ask_price) / 2
+                return [mid]  # Pelo menos um preço
+
+            return []
+        except Exception:
+            return []
 
     async def _update_positions(self) -> None:
         """Atualiza posições"""
@@ -537,7 +770,8 @@ class EliBotAPI:
             'symbols': self.config.symbols,
             'risk': self._risk_manager.stats if self._risk_manager else {},
             'oms': self._oms.stats if self._oms else {},
-            'strategies': self._strategy_engine.get_aggregate_stats() if self._strategy_engine else {}
+            'strategies': self._strategy_engine.get_aggregate_stats() if self._strategy_engine else {},
+            'ml': self._ml_manager.get_statistics() if self._ml_manager else {}
         }
 
 

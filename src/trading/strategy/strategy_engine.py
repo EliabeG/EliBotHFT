@@ -303,6 +303,97 @@ class StrategyEngine:
 
         return stats
 
+    def get_strategy_names(self) -> List[str]:
+        """
+        Retorna nomes das estratégias registradas
+        (Alias para list_strategies, usado pelo MLManager)
+        """
+        return self.list_strategies()
+
+    def update_strategy_weights(self, weights: Dict[str, float]) -> None:
+        """
+        Atualiza pesos de múltiplas estratégias de uma vez
+        (Usado pelo MLManager para ajustar pesos baseado em performance)
+
+        Args:
+            weights: Dict com nome da estratégia -> novo peso
+        """
+        with self._lock:
+            for name, weight in weights.items():
+                if name in self._weights:
+                    old_weight = self._weights[name].weight
+                    self._weights[name].weight = weight
+                    logger.info(f"ML: Peso de {name} ajustado: {old_weight:.3f} -> {weight:.3f}")
+                else:
+                    logger.warning(f"ML: Estratégia '{name}' não encontrada para ajuste de peso")
+
+    def get_market_regime(self, symbol: str) -> str:
+        """
+        Determina regime de mercado atual para um símbolo
+
+        Regimes:
+        - TRENDING_UP: Tendência de alta
+        - TRENDING_DOWN: Tendência de baixa
+        - RANGING: Mercado lateral
+        - VOLATILE: Alta volatilidade
+        - UNKNOWN: Não determinado
+
+        Args:
+            symbol: Símbolo do instrumento
+
+        Returns:
+            String indicando o regime de mercado
+        """
+        try:
+            book = self._books.get(symbol)
+            if not book:
+                return 'UNKNOWN'
+
+            # Obter histórico de preços se disponível
+            if hasattr(book, 'price_history') and len(book.price_history) >= 10:
+                prices = list(book.price_history)[-20:]
+            else:
+                # Usar quote atual como fallback
+                quote = book.get_quote()
+                if quote:
+                    return 'UNKNOWN'  # Sem histórico suficiente
+                return 'UNKNOWN'
+
+            if len(prices) < 10:
+                return 'UNKNOWN'
+
+            # Calcular métricas simples
+            import numpy as np
+
+            prices_arr = np.array(prices)
+            returns = np.diff(prices_arr) / prices_arr[:-1]
+
+            # Volatilidade
+            volatility = np.std(returns) * 100  # Em percentual
+
+            # Tendência (média dos retornos)
+            trend = np.mean(returns)
+
+            # Direção (quantos retornos positivos vs negativos)
+            positive_returns = np.sum(returns > 0)
+            negative_returns = np.sum(returns < 0)
+
+            # Classificar regime
+            if volatility > 0.5:  # Alta volatilidade
+                return 'VOLATILE'
+            elif abs(trend) < 0.0001 and abs(positive_returns - negative_returns) < 3:
+                return 'RANGING'
+            elif trend > 0.0001 and positive_returns > negative_returns:
+                return 'TRENDING_UP'
+            elif trend < -0.0001 and negative_returns > positive_returns:
+                return 'TRENDING_DOWN'
+            else:
+                return 'RANGING'
+
+        except Exception as e:
+            logger.debug(f"Erro ao determinar regime de mercado: {e}")
+            return 'UNKNOWN'
+
     def start(self) -> None:
         """Inicia o motor"""
         self._running = True
