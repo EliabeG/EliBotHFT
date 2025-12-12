@@ -19,13 +19,9 @@ import asyncio
 import logging
 import numpy as np
 from typing import Dict, List, Optional, Any, Tuple, Callable
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
-from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-import copy
+from dataclasses import dataclass, field
+from datetime import datetime
 import random
-import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -366,10 +362,13 @@ class BacktestEngine:
         if result.total_trades > 0:
             result.avg_trade_pnl = result.total_pnl / result.total_trades
 
-        # Profit factor
+        # Profit factor (FIX: limita valor máximo quando gross_loss = 0)
         gross_profit = sum(t['pnl'] for t in self._trades if t['pnl'] > 0)
         gross_loss = abs(sum(t['pnl'] for t in self._trades if t['pnl'] < 0))
-        result.profit_factor = gross_profit / gross_loss if gross_loss > 0 else gross_profit
+        if gross_loss > 0:
+            result.profit_factor = gross_profit / gross_loss
+        else:
+            result.profit_factor = min(gross_profit, 100.0)  # Cap em 100 se não houver perdas
 
         # Max drawdown
         peak = self._equity_curve[0]
@@ -393,12 +392,22 @@ class BacktestEngine:
                 current_consec = 0
         result.max_consecutive_losses = max_consec
 
-        # Sharpe ratio (simplificado)
+        # Sharpe ratio (FIX: anualização corrigida baseada em trades por período)
         if len(self._trades) > 1:
             returns = [t['pnl'] for t in self._trades]
             avg_return = np.mean(returns)
             std_return = np.std(returns)
-            result.sharpe_ratio = (avg_return / std_return * np.sqrt(252)) if std_return > 0 else 0
+            if std_return > 0:
+                # Estimativa de trades por ano baseado na duração do backtest
+                total_duration_bars = total_bars
+                trades_per_bar = len(self._trades) / total_duration_bars if total_duration_bars > 0 else 0
+                # Assumindo M1, 525600 minutos por ano
+                trades_per_year = trades_per_bar * 525600
+                annualization_factor = np.sqrt(max(trades_per_year, 1))
+                result.sharpe_ratio = (avg_return / std_return) * min(annualization_factor, 100)
+            else:
+                # Todos os trades com mesmo retorno
+                result.sharpe_ratio = avg_return * 10 if avg_return > 0 else 0
 
         return result
 
@@ -456,12 +465,14 @@ class MLOptimizer:
         Returns:
             Número de barras carregadas
         """
+        own_client = False
         try:
             if client is None:
                 # Import aqui para evitar circular import
                 from ..bindings.fxopen_client import FXOpenClient, FXOpenConfig
                 client = FXOpenClient(FXOpenConfig())
                 await client.connect()
+                own_client = True  # FIX: Marcar que criamos o cliente
 
             # Buscar barras M1
             bars = await client.get_bars_history(
@@ -490,6 +501,14 @@ class MLOptimizer:
 
         except Exception as e:
             logger.error(f"Erro ao carregar dados da API: {e}")
+
+        finally:
+            # FIX: Desconectar cliente se foi criado internamente
+            if own_client and client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
 
         return 0
 
@@ -648,11 +667,16 @@ class MLOptimizer:
     def _crossover(self, parent1: Dict[str, Any], parent2: Dict[str, Any]) -> Dict[str, Any]:
         """Crossover entre duas configurações (para algoritmo genético)"""
         child = {}
-        for param in self.config.param_ranges.keys():
+        for param, range_info in self.config.param_ranges.items():
+            # FIX: Usar valor default se param não existir em parent
+            default_val = range_info['min']
             if random.random() < 0.5:
-                child[param] = parent1.get(param)
+                child[param] = parent1.get(param, default_val)
             else:
-                child[param] = parent2.get(param)
+                child[param] = parent2.get(param, default_val)
+            # Garantir que valor não é None
+            if child[param] is None:
+                child[param] = default_val
         return child
 
     def run_backtest(self, config: Dict[str, Any]) -> BacktestResult:
@@ -747,10 +771,12 @@ class MLOptimizer:
 
     def optimize_genetic(self) -> BacktestResult:
         """Otimização via Algoritmo Genético"""
-        logger.info(f"Iniciando Algoritmo Genético (pop={self.config.population_size})...")
+        # FIX: Garantir population_size mínimo de 4 para algoritmo genético funcionar
+        effective_pop_size = max(4, self.config.population_size)
+        logger.info(f"Iniciando Algoritmo Genético (pop={effective_pop_size})...")
 
         # Inicializar população
-        population = [self._generate_random_config() for _ in range(self.config.population_size)]
+        population = [self._generate_random_config() for _ in range(effective_pop_size)]
         fitness_scores = []
 
         for gen in range(self.config.max_iterations):
@@ -786,16 +812,20 @@ class MLOptimizer:
 
             # Elitismo: manter os melhores
             sorted_indices = np.argsort(fitness_scores)[::-1]
-            elite_count = max(2, self.config.population_size // 10)
+            elite_count = max(2, effective_pop_size // 10)
 
-            for i in range(elite_count):
+            for i in range(min(elite_count, len(sorted_indices))):
                 new_population.append(population[sorted_indices[i]])
 
+            # FIX: Garantir que temos pelo menos 2 candidatos para seleção
+            selection_pool_size = max(2, effective_pop_size // 2)
+
             # Crossover e mutação para o resto
-            while len(new_population) < self.config.population_size:
-                # Tournament selection
-                idx1 = random.choice(sorted_indices[:self.config.population_size // 2])
-                idx2 = random.choice(sorted_indices[:self.config.population_size // 2])
+            while len(new_population) < effective_pop_size:
+                # Tournament selection com pool seguro
+                pool = sorted_indices[:selection_pool_size].tolist()
+                idx1 = random.choice(pool)
+                idx2 = random.choice(pool)
 
                 parent1 = population[idx1]
                 parent2 = population[idx2]
@@ -841,7 +871,10 @@ class MLOptimizer:
         # Salvar melhor configuração
         if self._best_result:
             filepath = self.config.best_config_path
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            # FIX: Verificar se há diretório antes de criar
+            dirname = os.path.dirname(filepath)
+            if dirname:
+                os.makedirs(dirname, exist_ok=True)
 
             with open(filepath, 'w') as f:
                 json.dump({

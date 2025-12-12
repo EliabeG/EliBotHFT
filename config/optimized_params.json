@@ -1,28 +1,28 @@
 {
   "config": {
-    "stop_loss_pips": 40,
-    "take_profit_pips": 14,
-    "trailing_stop_pips": 8,
-    "min_profit_to_trail_pips": 3.536603231343574,
-    "entry_threshold": 0.00033714304119496165,
-    "rsi_period": 11,
-    "rsi_overbought": 65,
-    "rsi_oversold": 35,
-    "ma_fast": 5,
-    "ma_slow": 50
+    "stop_loss_pips": 46,
+    "take_profit_pips": 24,
+    "trailing_stop_pips": 4,
+    "min_profit_to_trail_pips": 2.874955,
+    "entry_threshold": 0.000694,
+    "rsi_period": 19,
+    "rsi_overbought": 77,
+    "rsi_oversold": 29,
+    "ma_fast": 14,
+    "ma_slow": 33
   },
   "metrics": {
-    "total_trades": 17,
-    "win_rate": 0.9411764705882353,
-    "total_pnl": 8.833695597519675,
-    "sharpe_ratio": 17.72764231992232,
-    "profit_factor": 170.03490930654033,
-    "max_drawdown": 0.013709528272028274,
-    "fitness": 10359.48329488128
+    "total_trades": 0,
+    "win_rate": 0.0,
+    "total_pnl": 0.0,
+    "sharpe_ratio": 0.0,
+    "profit_factor": 0.0,
+    "max_drawdown": 0.0,
+    "fitness": -1000.0
   },
   "optimization": {
-    "method": "genetic",
-    "iterations": 200,
-    "timestamp": "2025-12-12T16:51:22.187763"
+    "method": "random",
+    "iterations": 10,
+    "timestamp": "2025-12-12T16:59:40.247131"
   }
 }
